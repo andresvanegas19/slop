@@ -15,6 +15,7 @@ import logging
 import re
 import threading
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -23,7 +24,7 @@ import yaml
 
 from contracts.research import Finding, PageVisit, ResearchSessionState, SourcedText
 from contracts.story import COMPETITOR_TOPICS, CompetitiveLandscape, Competitor
-from core.logs import event
+from core.logs import event, in_context
 
 from .research_tools import MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, clean_quote, norm, quote_in_page
 from .story_llm import JsonLlm
@@ -129,11 +130,12 @@ class CompetitorResearch:
 
     def __init__(self, state: ResearchSessionState, research_store, story_store, fetcher, llm: JsonLlm,
                  watch_file: str, max_competitors: int = 3, pages_per_competitor: int = 3,
-                 stopped: Optional[Callable[[], bool]] = None):
+                 stopped: Optional[Callable[[], bool]] = None, parallel: int = 1):
         self.state, self.research_store, self.story_store = state, research_store, story_store
         self.fetcher, self.llm, self.watch_file = fetcher, llm, watch_file
         self.max_competitors, self.pages_per_competitor = max_competitors, pages_per_competitor
         self.stopped = stopped or (lambda: False)
+        self.parallel = max(1, parallel)  # competitors verified / researched at the same time
         self.sid = state.session_id
         self.company = state.profile.name if state.profile else (state.intent.company_name if state.intent else "")
         self.pages: Dict[str, dict] = story_store.pages(self.sid)
@@ -178,16 +180,14 @@ class CompetitorResearch:
                 return self.landscape
             self.set_status("running", "finding {}'s competitors".format(self.company or "the company"))
             verified = [c for c in self.landscape.competitors if c.verified]
-            for cand in self.candidates():
-                if len(verified) >= self.max_competitors or self.stopped():
-                    break
-                comp = self.verify(cand)
-                if comp is not None:
-                    verified.append(comp)
-            for comp in verified:
-                if self.stopped():
-                    break
-                self.research(comp)
+            queue = self.candidates()
+            while queue and len(verified) < self.max_competitors and not self.stopped():
+                # verify just enough candidates at once to fill the open slots; earlier candidates win
+                slots = self.max_competitors - len(verified)
+                batch, queue = queue[:slots], queue[slots:]
+                verified += [c for c in self.each(self.verify, batch) if c is not None][:slots]
+            if not self.stopped():
+                self.each(self.research, verified)
             if self.stopped():
                 self.set_status("skipped", "research was stopped")
                 return self.landscape
@@ -200,6 +200,15 @@ class CompetitorResearch:
                 self.landscape.error = "{}: {}".format(type(e).__name__, str(e)[:300])
             self.set_status("error", self.landscape.error)
         return self.landscape
+
+    def each(self, fn, items: list) -> list:
+        """fn(item) for every item, up to `parallel` at a time (each is a few fetches plus 5-20 s Liquid calls);
+        results keep the order of `items`."""
+        workers = min(self.parallel, len(items))
+        if workers <= 1:
+            return [fn(item) for item in items]
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="competitors-" + self.sid[-8:]) as pool:
+            return [f.result() for f in [pool.submit(in_context(fn), item) for item in items]]
 
     # --- step 1: candidates -----------------------------------------------------------------------------------------
     def candidates(self) -> List[dict]:

@@ -1,6 +1,7 @@
 """Research sessions, offline: a fixture website behind httpx.MockTransport, a scripted fake Liquid, a fake RawTree."""
 import json
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -288,6 +289,40 @@ def test_home_problem_spots_parked_domains_and_other_companies():
         "https://www.atlassian.com/software/jira")
     assert extract("https://linear.app/", '<html><head><link rel="canonical" href="https://linear.app"></head>'
                    '<body>Linear</body></html>').canonical == "https://linear.app/"
+
+
+def test_pages_are_read_in_parallel_with_the_same_findings(tmp_path):
+    class SlowLiquid(FakeLiquid):
+        active = peak = 0
+        lock = threading.Lock()
+
+        def reply(self, messages, text):
+            if "[task:extract]" not in text:
+                return super().reply(messages, text)
+            with SlowLiquid.lock:
+                SlowLiquid.active += 1
+                SlowLiquid.peak = max(SlowLiquid.peak, SlowLiquid.active)
+            time.sleep(0.2)
+            with SlowLiquid.lock:
+                SlowLiquid.active -= 1
+            return super().reply(messages, text)
+
+    def findings(parallel):
+        s = load_settings(state_db=str(tmp_path / "state.db"), agent_db=str(tmp_path / "p{}.db".format(parallel)),
+                          openrouter_key="", rawtree_key="", research_max_pages=6, research_max_steps=10,
+                          research_parallel=parallel)
+        fetcher = lambda: WebFetcher(httpx.Client(transport=httpx.MockTransport(site_handler([])),  # noqa: E731
+                                                  headers={"User-Agent": USER_AGENT}))
+        manager = ResearchManager(s, ResearchStore(s.agent_db), llm_factory=SlowLiquid,
+                                  outbox=AgentStore(s.agent_db), fetcher_factory=fetcher)
+        SlowLiquid.peak = 0
+        view = wait_done(manager, manager.start("Make a company video for Acme Cola", looping=False))
+        return [(f["evidence_url"], f["quote"]) for f in view["findings"]], SlowLiquid.peak
+
+    sequential, peak1 = findings(1)
+    parallel, peak3 = findings(3)
+    assert peak1 == 1 and peak3 > 1
+    assert parallel == sequential and sequential
 
 
 def test_resolve_skips_parked_and_redirected_domains(settings):

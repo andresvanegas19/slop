@@ -150,7 +150,8 @@ class StoryService:
             return
         llm = JsonLlm(self.llm_factory(), self.settings.model)
         CompetitorResearch(state, self.research_store, self.store, fetcher, llm, self.settings.watch_file,
-                           self.max_competitors, self.pages_per_competitor, stopped=lambda: self._stopped(sid)).run()
+                           self.max_competitors, self.pages_per_competitor, stopped=lambda: self._stopped(sid),
+                           parallel=self.settings.research_parallel).run()
 
     def watch_once(self):
         """Starts competitor research for sessions (created while this worker runs) that now have a profile."""

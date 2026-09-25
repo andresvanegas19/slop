@@ -18,6 +18,7 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -662,9 +663,7 @@ class ResearchSession:
             nxt = self.next_link()
             if nxt is None:
                 break
-            page = self.get_page(nxt)
-            if page and "error" not in page:
-                self.extract_page(page)
+            self.get_page(nxt)
         self.extract_pending()
 
     def next_link(self) -> Optional[str]:
@@ -685,21 +684,37 @@ class ResearchSession:
         return best
 
     def extract_pending(self):
-        for url, page in list(self.pages.items()):
+        """Findings from every fetched page not read yet. Each Liquid call takes 5-20 s (the model always reasons),
+        so up to `research_parallel` pages are read at once; findings are applied in page order either way."""
+        pages = [page for url, page in list(self.pages.items())
+                 if url == page.get("url") and page.get("status") == 200 and url not in self.extracted]
+        if not pages or self.stop_event.is_set():
+            return
+        self.extracted.update(page["url"] for page in pages)
+        workers = min(max(1, self.settings.research_parallel), len(pages)) if self.llm is not None else 1
+        if workers == 1:
+            replies = [self.extract_page(page) for page in pages]
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract-" + self.sid[-8:]) as pool:
+                replies = [f.result() for f in [pool.submit(in_context(self.extract_page), page) for page in pages]]
+        for page, got in zip(pages, replies):
             if self.stop_event.is_set():
                 return
-            if url == page.get("url") and page.get("status") == 200 and url not in self.extracted:
-                self.extract_page(page)
+            self.apply_extract(page, got)
 
-    def extract_page(self, page: dict):
+    def extract_page(self, page: dict) -> Optional[dict]:
+        """Liquid's reply for one page (`purpose=extract_page` in llm_call_done log lines)."""
+        if self.llm is None or self.stop_event.is_set():
+            return None
+        return self.ask_json(EXTRACT_PROMPT.format(
+            name=self.company, url=page["url"], title=page.get("title", ""),
+            text=page.get("text", "")[:EXTRACT_PAGE_CHARS], n=MAX_FINDINGS_PER_PAGE, topics=", ".join(FINDING_TOPICS)))
+
+    def apply_extract(self, page: dict, got: Optional[dict]):
         """Findings from one page: Liquid proposes quotes, code keeps only verbatim ones. Deterministic fallback:
         the meta description and the first substantial paragraphs."""
         url = page["url"]
-        self.extracted.add(url)
         added = 0
-        got = self.ask_json(EXTRACT_PROMPT.format(
-            name=self.company, url=url, title=page.get("title", ""), text=page.get("text", "")[:EXTRACT_PAGE_CHARS],
-            n=MAX_FINDINGS_PER_PAGE, topics=", ".join(FINDING_TOPICS))) if self.llm is not None else None
         for item in (got or {}).get("findings", [])[:MAX_FINDINGS_PER_PAGE] if isinstance(got, dict) else []:
             if isinstance(item, dict):
                 res = self.add_finding(item.get("topic"), item.get("claim"), url, str(item.get("quote", "")),

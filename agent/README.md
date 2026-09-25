@@ -67,13 +67,16 @@ RawTree slop_human* + core state.db ──tools (contracts/)──► ReAct loop
 ## Research sessions
 
 "Generate a video for my company Coca-Cola" starts a session: Liquid extracts `{company_name, likely_domain,
-video_goal}`, candidate domains (`https://www.<slug>.com`, ...) are verified by fetching (HTTP 200 + the name on the
-page), then rounds run while `looping` is on (`RESEARCH_MAX_ROUNDS`, `RESEARCH_INTERVAL_S` apart; a round that finds
-nothing new ends it):
+video_goal}`, candidate domains (`https://www.<slug>.com`, `.co`, `.io`, `.ai`, `.app`, ...) are verified by fetching
+(HTTP 200 + the name on the page). Parked or for-sale domains and redirects to an unrelated site are skipped
+(`linear.co` → a NamePros listing, `linear.com` → analog.com; `jira.com` → `atlassian.com/software/jira` is kept
+because the path names the brand). Then rounds run while `looping` is on (`RESEARCH_MAX_ROUNDS`,
+`RESEARCH_INTERVAL_S` apart; a round that finds nothing new ends it):
 
 1. ReAct loop over `ResearchTools` (Liquid picks tools; up to `RESEARCH_MAX_STEPS`, nudged to use its page budget).
-2. Extraction pass: Liquid reads every fetched page (up to 24k chars) and proposes findings; **code keeps a finding only
-   if its quote is verbatim on that page** (`record_finding` enforces the same rule).
+2. Extraction pass: Liquid reads every fetched page (up to 24k chars, `RESEARCH_PARALLEL` pages at once) and proposes
+   findings; **code keeps a finding only if its quote is verbatim on that page** (`record_finding` enforces the same
+   rule). Findings are applied in page order, so parallel and sequential runs give the same result.
 3. Crawl fill up to `RESEARCH_MAX_PAGES` pages per round: best unvisited same-site links, spread across sections.
 4. `CompanyProfile` (Liquid cites finding ids; code maps them to `evidence_url`s and drops uncited items), then 3-5
    follow-up questions with 2-4 options (Liquid; templates as fallback). Topics the user already settled (earlier
@@ -105,7 +108,8 @@ The studio's first home prompt goes to `POST /research/detect`: rules first, the
 and only a name written in the prompt is accepted. When it names a company the app starts a session. Once the session
 has a profile, the worker's watcher researches up to `RESEARCH_MAX_COMPETITORS` competitors (sessions created while
 this worker runs; not test sessions). Liquid proposes them and `config/watch.yaml` peers are added; each home must
-answer and mention the name. Pages are read with the Nimble fetcher (`RESEARCH_FETCHER`), and competitor findings keep
+answer and mention the name (same parked-domain / unrelated-redirect checks as the company's site). Competitors are
+verified and researched `RESEARCH_PARALLEL` at a time. Pages are read with the Nimble fetcher (`RESEARCH_FETCHER`), and competitor findings keep
 the verbatim-quote rule. The resulting `CompetitiveLandscape` holds differentiators (company facts competitors don't
 claim) and `avoid_terms` (their names/domains). **Videos never name competitors**: storylines, edits and generated
 scenes that mention an avoid term are rewritten from facts or rejected.
