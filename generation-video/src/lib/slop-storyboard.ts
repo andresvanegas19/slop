@@ -13,10 +13,11 @@ const DEFAULT_TABLE = "slop_human";
 /** Test runs written while wiring up the scraper; excluded unless `includeTestRows` is set. */
 export const IGNORED_RUN_ID_PREFIXES = ["run_20260925T1946", "run_20260925T1948"] as const;
 
-const STYLE_PREFIX = "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos.";
+/** House style: real, candid moments that feel filmed on a phone (see knowledge/storyboard-style.md). */
+const STYLE_PREFIX = "Handheld smartphone footage, slight natural sway, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, candid real people, no text, letters or logos in frame.";
 const STYLE = {
   prompt_prefix: STYLE_PREFIX,
-  palette: ["#0B1B3A", "#14B8A6", "#F97360", "#F8FAFC"],
+  palette: ["#2B2521", "#C98B4F", "#E9DCC9", "#F8F4EE"],
   seed: 42,
   aspect_ratio: "16:9",
   resolution: "1920x1080",
@@ -346,7 +347,9 @@ export function buildSlopStoryboard(table: string, observations: Observation[], 
       headline: titleHeadline,
       sub: `${changedCount} pricing change${changedCount === 1 ? "" : "s"} · ${observations.length} scrapes`,
     },
-    image_prompt: `${STYLE_PREFIX} a wide constellation of ${entities.length} glowing nodes on a dark grid, ${changedCount > 0 ? `${changedCount} of them pulsing coral` : "all glowing a calm teal"}`,
+    image_prompt: `${STYLE_PREFIX} ${changedCount > 0
+      ? "a product manager in a grey hoodie stands by her kitchen window at dawn, coffee in one hand, reading pricing news on her phone, her eyebrows rising, soft blue morning light on her face"
+      : "a product manager in a grey hoodie leans on her kitchen counter at dawn, scrolling her phone calmly, steam rising from her coffee, soft blue morning light through the window"}`,
     motion: "slow zoom out",
     transition_out: "crossfade_0.3s",
     change_ids: [],
@@ -375,22 +378,22 @@ export function buildSlopStoryboard(table: string, observations: Observation[], 
       headline = `${entity.entityName} ${priceChange.plan.name}: ${priceChange.before.label} → ${priceChange.plan.label}`;
       narration = `${entity.entityName} ${priceChange.plan.name} now ${spokenPrice(priceChange.plan)}.`;
       visual = cheaper
-        ? "a large price tag sliced cleanly in half by a glowing blade, small coins tumbling out"
-        : "a price tag inflating like a balloon, rising above a row of smaller tags";
+        ? "a small product team huddles around a laptop in a sunlit office, one of them points at the screen and the others lean in, surprised and half-laughing"
+        : "two colleagues at a standing desk exchange a knowing look over a laptop, one exhales and smiles, late-afternoon window light";
     } else if (entity.pricingChanged) {
       headline = flagship
         ? `${entity.entityName} ${flagship.name}: ${flagship.label}`
         : `${entity.entityName} updated its pricing page`;
       narration = `${entity.entityName} changed its pricing page.`;
-      visual = "a pricing card flipping over mid-air, a coral spark of change glowing at its edge";
+      visual = "a designer at a café table turns her laptop toward a teammate, both leaning in to compare something, warm window light and a quick shared glance";
     } else if (flagship) {
       headline = `${entity.entityName} ${flagship.name}: ${flagship.label}`;
       narration = `${entity.entityName} ${flagship.name}: ${spokenPrice(flagship)}.`;
-      visual = "a staircase of glowing product tiers, the top step lit by a teal spotlight";
+      visual = "a founder walks down a quiet hallway reading her phone, then slows and nods to herself, soft overhead office light and evening glow from the windows";
     } else {
       headline = `${entity.entityName}: pricing not captured`;
       narration = `${entity.entityName}: no pricing captured.`;
-      visual = "a foggy storefront window with blurred shapes behind the glass, a small teal lantern outside";
+      visual = "a teammate refreshes a page on a laptop in a dim room at night, shrugs and rubs his eyes, the screen glow on his face and a desk lamp beside him";
     }
     const sub = entity.plans.length > 0
       ? entity.plans.slice(0, 4).map((plan) => (plan.label.toLowerCase() === plan.name.toLowerCase() ? plan.name : `${plan.name} ${plan.label}`)).join(" · ")

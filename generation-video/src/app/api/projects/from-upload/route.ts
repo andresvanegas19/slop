@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { segmentFrameFromUpload } from "@/lib/clip-project";
 import { createProject, titleFromPrompt } from "@/lib/projects";
+import { schedulePublish } from "@/lib/video-store";
 import { logException, logInfo } from "@/lib/runtime-log";
 import { loadUpload, UploadError } from "@/lib/uploads";
 
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
       durationSeconds: frame.durationSec,
       frames: [frame],
     });
+    schedulePublish(project, "uploaded");
     logInfo("project_from_upload_created", { projectId: project.id, uploadId: upload.id, durationSeconds: project.durationSeconds });
     return NextResponse.json({ project });
   } catch (error) {

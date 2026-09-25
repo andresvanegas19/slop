@@ -3,6 +3,7 @@ import { describeError } from "@/lib/bfl";
 import { loadProject, ProjectNotFoundError, saveProject, withProjectLock } from "@/lib/projects";
 import { logException, logInfo } from "@/lib/runtime-log";
 import { removeFrame, TimelineError } from "@/lib/timeline-ops";
+import { schedulePublish } from "@/lib/video-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,6 +21,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
       await saveProject(updated);
       return updated;
     });
+    schedulePublish(project, "cut");
     logInfo("project_frame_removed", { projectId: id, index, frames: project.frames.length, durationSeconds: project.durationSeconds });
     return NextResponse.json({ project });
   } catch (error) {

@@ -2,6 +2,18 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 export type RagSource = { id: string; title: string; path: string; score: number };
+/** A scored knowledge-base hit (doc section or learned edit example) with where it came from. */
+export type KnowledgeHit = {
+  kind: "knowledge" | "example";
+  id: string;
+  title: string;
+  path: string;
+  /** `path#section-slug` for docs, `path#L<line>` for examples. */
+  ref: string;
+  body: string;
+  at?: string;
+  score: number;
+};
 export type RagContext = { text: string; sources: RagSource[] };
 
 type EditExample = {
@@ -22,8 +34,15 @@ type Chunk = {
   tags: string[];
   /** 0..1 recency rank for examples (1 = newest); 0 for docs. */
   recency: number;
+  /** Heading slug (docs) or line number (examples), for source references. */
+  anchor: string;
+  /** Example timestamp (ISO), when known. */
+  at?: string;
   tokens: string[];
   termFreq: Map<string, number>;
+  titleTerms: Set<string>;
+  bigrams: Set<string>;
+  tokenSet: Set<string>;
 };
 
 type Index = {
@@ -67,7 +86,7 @@ function stem(word: string): string {
   return word;
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   const out: string[] = [];
   for (const raw of text.toLowerCase().replace(/[^a-z0-9#\s-]+/g, " ").split(/[\s-]+/)) {
     const word = raw.replace(/^#+/, "");
@@ -124,12 +143,22 @@ function splitBySize(text: string, size: number): string[] {
   return pieces;
 }
 
-function makeChunk(fields: Omit<Chunk, "tokens" | "termFreq">): Chunk {
-  const tokens = tokenize(`${fields.title} ${fields.title} ${fields.body} ${fields.tags.join(" ")}`);
+export function bigramsOf(tokens: string[]) {
+  const pairs = new Set<string>();
+  for (let index = 1; index < tokens.length; index += 1) pairs.add(`${tokens[index - 1]} ${tokens[index]}`);
+  return pairs;
+}
+
+function makeChunk(fields: Omit<Chunk, "tokens" | "termFreq" | "titleTerms" | "bigrams" | "tokenSet">): Chunk {
+  const bodyTokens = tokenize(`${fields.body} ${fields.tags.join(" ")}`);
+  const titleTokens = tokenize(fields.title);
+  const tokens = [...titleTokens, ...bodyTokens];
   const termFreq = new Map<string, number>();
   for (const token of tokens) termFreq.set(token, (termFreq.get(token) ?? 0) + 1);
-  return { ...fields, tokens, termFreq };
+  return { ...fields, tokens, termFreq, titleTerms: new Set(titleTokens), bigrams: bigramsOf(bodyTokens), tokenSet: new Set(bodyTokens) };
 }
+
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 function chunkMarkdown(file: string, content: string): Chunk[] {
   const relative = path.relative(process.cwd(), file);
@@ -137,17 +166,17 @@ function chunkMarkdown(file: string, content: string): Chunk[] {
   const docTitle = /^#\s+(.+)$/m.exec(body)?.[1].trim() ?? path.basename(file, ".md");
   const sections = body.split(/^(?=##\s)/m);
   const chunks: Chunk[] = [];
-  const push = (title: string, text: string) => {
+  const push = (title: string, text: string, heading?: string) => {
     const clean = text.replace(/^#\s+.+$/m, "").trim();
     if (!clean) return;
     for (const piece of clean.length > FALLBACK_CHUNK_CHARS * 2 ? splitBySize(clean, FALLBACK_CHUNK_CHARS) : [clean]) {
-      chunks.push(makeChunk({ id: `${relative}#${chunks.length}`, title, path: relative, body: piece, tags, recency: 0 }));
+      chunks.push(makeChunk({ id: `${relative}#${chunks.length}`, title, path: relative, body: piece, tags, recency: 0, anchor: heading ? slug(heading) : "" }));
     }
   };
   for (const section of sections) {
     const heading = /^##\s+(.+)$/m.exec(section);
     if (heading && section.startsWith("##")) {
-      push(`${docTitle} — ${heading[1].trim()}`, section.slice(heading[0].length));
+      push(`${docTitle} — ${heading[1].trim()}`, section.slice(heading[0].length), heading[1].trim());
     } else {
       push(docTitle, section);
     }
@@ -182,6 +211,8 @@ function parseExamples(content: string): Chunk[] {
           body,
           tags: ["example", example.kind === "clip" ? "clip" : "storyboard"],
           recency: recent.length > 1 ? index / (recent.length - 1) : 1,
+          anchor: `L${lines.length - recent.length + index + 1}`,
+          ...(typeof example.at === "string" ? { at: example.at } : {}),
         }),
       );
     } catch {
@@ -253,22 +284,103 @@ async function getIndex(): Promise<Index> {
 
 // ---------- retrieval ----------
 
+/** Extra weight (× idf) for each query term found in the chunk's heading. */
+const TITLE_WEIGHT = 0.35;
+/** Multiplier boost per query bigram (adjacent terms) found in the chunk body: rewards phrase matches. */
+const BIGRAM_BOOST = 0.12;
+const MAX_BIGRAM_BOOST = 0.5;
+/** At most this many chunks per file (the examples file included), so one doc can't take every slot. */
+const PER_SOURCE_CAP = 2;
+/** Chunks whose body token sets overlap at least this much (Jaccard) with an already-picked chunk are skipped. */
+const NEAR_DUPLICATE = 0.8;
+const EXAMPLE_HALF_LIFE_DAYS = 30;
+
+function idf(index: Index, term: string) {
+  const df = index.docFreq.get(term) ?? 0;
+  return Math.log(1 + (index.chunks.length - df + 0.5) / (df + 0.5));
+}
+
 function score(index: Index, chunk: Chunk, queryTerms: string[]): number {
-  const n = index.chunks.length;
   let total = 0;
   for (const term of queryTerms) {
     const tf = chunk.termFreq.get(term);
     if (!tf) continue;
-    const df = index.docFreq.get(term) ?? 0;
-    const idf = Math.log(1 + (n - df + 0.5) / (df + 0.5));
-    total += (idf * tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + (BM25_B * chunk.tokens.length) / index.avgLength));
+    total += (idf(index, term) * tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + (BM25_B * chunk.tokens.length) / index.avgLength));
   }
   return total;
 }
 
-function formatChunk(position: number, chunk: Chunk, budget: number): string {
-  const body = chunk.body.replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
-  const prefix = `[${position}] ${chunk.title}: `;
+export function jaccard(a: Set<string>, b: Set<string>) {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const value of a) if (b.has(value)) shared += 1;
+  return shared / (a.size + b.size - shared);
+}
+
+function recencyOf(chunk: Chunk) {
+  const at = chunk.at ? Date.parse(chunk.at) : NaN;
+  if (Number.isFinite(at)) return Math.pow(0.5, Math.max(0, Date.now() - at) / 86_400_000 / EXAMPLE_HALF_LIFE_DAYS);
+  return chunk.recency;
+}
+
+/**
+ * Ranked knowledge-base hits (docs in knowledge/*.md + learned edit examples): BM25 + heading-term weight + phrase
+ * (bigram) boost + tag boost + recency for examples, then per-file caps and near-duplicate removal. Never throws.
+ */
+export async function searchKnowledge(query: string, options?: { k?: number; tags?: string[] }): Promise<KnowledgeHit[]> {
+  try {
+    const k = Math.max(1, Math.min(20, Math.floor(options?.k ?? 4)));
+    const wantedTags = new Set((options?.tags ?? []).map((tag) => tag.toLowerCase()));
+    const ordered = tokenize(typeof query === "string" ? query : "");
+    const queryTerms = [...new Set(ordered)];
+    if (!queryTerms.length) return [];
+    const queryBigrams = [...bigramsOf(ordered)];
+
+    const index = await getIndex();
+    const ranked = index.chunks
+      .map((chunk) => {
+        const base = score(index, chunk, queryTerms);
+        if (base <= 0) return { chunk, value: 0 };
+        const titleBonus = queryTerms.reduce((sum, term) => sum + (chunk.titleTerms.has(term) ? idf(index, term) * TITLE_WEIGHT : 0), 0);
+        const phrases = queryBigrams.filter((pair) => chunk.bigrams.has(pair)).length;
+        let multiplier = 1 + Math.min(MAX_BIGRAM_BOOST, phrases * BIGRAM_BOOST);
+        if (wantedTags.size && chunk.tags.some((tag) => wantedTags.has(tag))) multiplier += TAG_BOOST;
+        if (chunk.tags.includes("example")) multiplier += RECENCY_BOOST * recencyOf(chunk);
+        return { chunk, value: (base + titleBonus) * multiplier };
+      })
+      .filter((entry) => entry.value > 0)
+      .sort((a, b) => b.value - a.value);
+    if (!ranked.length) return [];
+    const floor = ranked[0].value * MIN_RELATIVE_SCORE;
+
+    const picked: typeof ranked = [];
+    const perPath = new Map<string, number>();
+    for (const entry of ranked) {
+      if (picked.length >= k || entry.value < floor) break;
+      if ((perPath.get(entry.chunk.path) ?? 0) >= PER_SOURCE_CAP) continue;
+      if (picked.some((other) => jaccard(other.chunk.tokenSet, entry.chunk.tokenSet) >= NEAR_DUPLICATE)) continue;
+      perPath.set(entry.chunk.path, (perPath.get(entry.chunk.path) ?? 0) + 1);
+      picked.push(entry);
+    }
+    return picked.map(({ chunk, value }) => ({
+      kind: chunk.tags.includes("example") ? "example" : "knowledge",
+      id: chunk.id,
+      title: chunk.title,
+      path: chunk.path,
+      ref: chunk.anchor ? `${chunk.path}#${chunk.anchor}` : chunk.path,
+      body: chunk.body,
+      ...(chunk.at ? { at: chunk.at } : {}),
+      score: Math.round(value * 1000) / 1000,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Formats one "[n] Title: body" line within `budget` chars ("" if it doesn't fit). */
+export function formatGuidanceLine(position: number, title: string, rawBody: string, budget: number): string {
+  const body = rawBody.replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+  const prefix = `[${position}] ${title}: `;
   const full = prefix + body;
   if (full.length <= budget) return full;
   if (budget < prefix.length + 40) return "";
@@ -283,39 +395,20 @@ export async function retrieveContext(
   options?: { k?: number; maxChars?: number; tags?: string[] },
 ): Promise<RagContext> {
   try {
-    const k = Math.max(1, Math.min(20, Math.floor(options?.k ?? 4)));
     const maxChars = Math.max(200, Math.floor(options?.maxChars ?? 2500));
-    const wantedTags = new Set((options?.tags ?? []).map((tag) => tag.toLowerCase()));
-    const queryTerms = [...new Set(tokenize(typeof query === "string" ? query : ""))];
-    if (!queryTerms.length) return { text: "", sources: [] };
-
-    const index = await getIndex();
-    const ranked = index.chunks
-      .map((chunk) => {
-        const base = score(index, chunk, queryTerms);
-        if (base <= 0) return { chunk, value: 0 };
-        let multiplier = 1;
-        if (wantedTags.size && chunk.tags.some((tag) => wantedTags.has(tag))) multiplier += TAG_BOOST;
-        if (chunk.recency > 0) multiplier += RECENCY_BOOST * chunk.recency;
-        return { chunk, value: base * multiplier };
-      })
-      .filter((entry) => entry.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .filter((entry, _, all) => entry.value >= all[0].value * MIN_RELATIVE_SCORE)
-      .slice(0, k);
-    if (!ranked.length) return { text: "", sources: [] };
-
+    const hits = await searchKnowledge(query, options);
+    if (!hits.length) return { text: "", sources: [] };
     const lines: string[] = [];
     const sources: RagSource[] = [];
     let used = HEADER.length;
-    for (const { chunk, value } of ranked) {
+    for (const hit of hits) {
       const remaining = maxChars - used - 1;
       if (remaining <= 0) break;
-      const line = formatChunk(lines.length + 1, chunk, remaining);
+      const line = formatGuidanceLine(lines.length + 1, hit.title, hit.body, remaining);
       if (!line) break;
       lines.push(line);
       used += line.length + 1;
-      sources.push({ id: chunk.id, title: chunk.title, path: chunk.path, score: Math.round(value * 1000) / 1000 });
+      sources.push({ id: hit.id, title: hit.title, path: hit.path, score: hit.score });
     }
     if (!lines.length) return { text: "", sources: [] };
     return { text: `${HEADER}\n${lines.join("\n")}`, sources };

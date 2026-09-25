@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { BflError, describeError, generateBflImage } from "@/lib/bfl";
+import { companyVisualHint, getCompanyContext } from "@/lib/company-agent";
 import { logError, logInfo, logException } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
@@ -19,7 +20,8 @@ export async function POST(request: Request) {
     }
 
     logInfo("image_generation_started", { shotId: body.shotId, promptLength: body.prompt.trim().length });
-    const sampleUrl = await generateBflImage(body.prompt.trim());
+    const company = await getCompanyContext(body.prompt.trim(), "image");
+    const sampleUrl = await generateBflImage(`${body.prompt.trim()}${companyVisualHint(company)}`);
     const sampleResponse = await fetch(sampleUrl).catch((error: unknown) => {
       throw new BflError(describeError(error, "BFL finished the image, but downloading it failed"));
     });

@@ -69,6 +69,19 @@ export type Project = {
   chats: Record<string, ChatMessage[]>;
   /** Normalized (validated) storyboard used to re-render storyboard projects. */
   storyboard?: unknown;
+  /** Company-research session this video was generated from (generate-preset `researchSessionId`). */
+  researchSessionId?: string;
+  /** Last RawTree publish of the project video (src/lib/video-store.ts). */
+  published?: {
+    sha256: string;
+    at: string;
+    status: "ok" | "failed";
+    videoUrl: string;
+    chunksWritten?: number;
+    chunkCount?: number;
+    note?: string;
+    error?: string;
+  };
 };
 
 export class ProjectNotFoundError extends Error {}

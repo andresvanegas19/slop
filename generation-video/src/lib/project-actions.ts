@@ -1,6 +1,7 @@
 import path from "node:path";
 import { BflError, describeError } from "@/lib/bfl";
-import { CLIP_SECONDS, renderClipFromFrame } from "@/lib/clip";
+import { CLIP_SECONDS } from "@/lib/clip";
+import { renderContinuationShot } from "@/lib/continuation";
 import { assembleClipProject, ClipProjectError, segmentFrameFromUpload } from "@/lib/clip-project";
 import { decideFrameChat } from "@/lib/frame-chat";
 import { frameAt, FrameGrabError, grabVideoFrame } from "@/lib/frame-grab";
@@ -20,10 +21,12 @@ import {
 } from "@/lib/projects";
 import { enhanceImagePrompt, enhanceShotPrompt } from "@/lib/prompt-enhance";
 import { recordEditExample, retrieveContext, type RagContext } from "@/lib/rag";
+import { emitEvent, emitStage, isStreaming } from "@/lib/progress";
 import { logInfo } from "@/lib/runtime-log";
 import { extractFirstFrame, extractLastFrame, SegmentError, videoFilePath } from "@/lib/segments";
 import { appendVideoFile, cutRange, TimelineError, trimSegmentTo } from "@/lib/timeline-ops";
 import { loadUpload, UploadError } from "@/lib/uploads";
+import { schedulePublish } from "@/lib/video-store";
 
 /** Validation / "not possible" errors raised by the shared project actions (status is the HTTP status to return). */
 export class ActionError extends Error {
@@ -159,12 +162,20 @@ export async function askFrame(input: AskInput): Promise<AskResult> {
 
   logInfo("frame_ask_started", { projectId: id, frame: index, messageLength: message.length, atSec, mode });
   const frame = project.frames.find((item) => item.index === index)!;
+  emitStage("guidance", "Looking up editing guidance…");
   const rag = relevantGuidance(await retrieveContext(
     [message, frame.prompt, frame.headline, frame.narration].filter(Boolean).join("\n"),
     { k: 3, maxChars: GUIDANCE_MAX_CHARS, tags: ["editing", "flux", project.kind === "storyboard" ? "storyboard" : "motion"] },
   ), project.kind);
   const ragSources = [...new Set(rag.sources.map((source) => source.title))];
-  const decision = await decideFrameChat(project, index, message, { referenceImagePath, atSec, guidance: rag.text });
+  emitStage("prompt", mode === "answer" ? "Thinking about your question…" : "Reading your request…");
+  const streaming = isStreaming();
+  const decision = await decideFrameChat(project, index, message, {
+    referenceImagePath,
+    atSec,
+    guidance: rag.text,
+    onToken: streaming && mode !== "edit" ? (text) => emitEvent({ type: "token", field: "reply", text }) : undefined,
+  });
   if (mode === "answer") decision.edit = undefined;
   if (mode === "edit" && !decision.edit?.image_prompt) {
     // Intent detection already decided this is an edit: let the enhancer expand the user's instruction.
@@ -175,8 +186,13 @@ export async function askFrame(input: AskInput): Promise<AskResult> {
   // Image edits get a focused second call that expands the user's instruction into a detailed prompt.
   let enhancedPrompt: string | undefined;
   if (decision.edit?.image_prompt) {
-    const enhanced = await enhanceImagePrompt({ project, index, instruction: message, draftPrompt: decision.edit.image_prompt, referenceImagePath, guidance: rag.text });
+    emitStage("prompt", "Writing a detailed image prompt…");
+    const enhanced = await enhanceImagePrompt({
+      project, index, instruction: message, draftPrompt: decision.edit.image_prompt, referenceImagePath, guidance: rag.text,
+      onToken: streaming ? (text) => emitEvent({ type: "token", field: "enhancedPrompt", text }) : undefined,
+    });
     enhancedPrompt = enhanced.prompt;
+    emitEvent({ type: "prompt", enhancedPrompt });
     decision.edit = { ...decision.edit, image_prompt: enhanced.prompt };
     logInfo("frame_ask_prompt_enhanced", { projectId: id, frame: index, source: enhanced.source, length: enhanced.prompt.length });
   }
@@ -216,10 +232,12 @@ export async function askFrame(input: AskInput): Promise<AskResult> {
       },
     ];
     current = { ...current, chats: { ...current.chats, [key]: thread }, updatedAt: now };
+    emitStage("save", "Saving the project…");
     await saveProject(current);
     return { reply: decision.reply, edited, project: current };
   });
 
+  if (result.edited && result.project.videoUrl !== project.videoUrl) schedulePublish(result.project, "edited");
   logInfo("frame_ask_completed", { projectId: id, frame: index, edited: result.edited, ragSources: ragSources.length });
   if (result.edited && enhancedPrompt) {
     // Learning example for future retrievals; never blocks or fails the response.
@@ -261,6 +279,8 @@ export type AppendResult = {
   addedSeconds: number;
   enhancedPrompt?: string;
   ragSources?: string[];
+  /** Generated appends: "v2v" (continued from the video's last ~2s) or "i2v" (from its last frame), per shot. */
+  continuationModes?: string[];
 };
 
 export async function appendToProject(input: AppendInput): Promise<AppendResult> {
@@ -299,11 +319,13 @@ export async function appendToProject(input: AppendInput): Promise<AppendResult>
     const before = project.durationSeconds;
     if (source) {
       // The source's current rendered video (clip or storyboard) becomes one new segment.
+      emitStage("render", "Adding the video to the end…");
       const appended = await appendVideoFile(project, videoFilePath(source.videoUrl), { prompt: `From: ${source.title}`, source: "project" });
       await saveProject(appended);
       return { project: appended, appendedFrameIndexes: [appended.frames.length - 1], addedSeconds: appended.durationSeconds - before };
     }
     if (upload) {
+      emitStage("render", "Adding the uploaded video to the end…");
       const frame = await segmentFrameFromUpload(upload.filePath, prompt || `Uploaded video: ${upload.upload.filename}`);
       const assembled = await assembleClipProject(project, [...project.frames, { ...frame, index: project.frames.length }]);
       await saveProject(assembled);
@@ -313,23 +335,32 @@ export async function appendToProject(input: AppendInput): Promise<AppendResult>
     // Generated: continuity — each new shot starts from the last frame of what comes before it.
     const previous = project.frames.at(-1);
     const previousPrompt = previous?.prompt ?? project.title;
-    let keyframe = await extractLastFrame(videoFilePath(project.videoUrl));
-    const rag = await retrieveContext(`${prompt}\n${previousPrompt}`, { k: 3, maxChars: GUIDANCE_MAX_CHARS, tags: ["motion", "flux"] });
+    const keyframe = await extractLastFrame(videoFilePath(project.videoUrl));
+    let contextVideo = videoFilePath(project.videoUrl);
+    const continuationModes: string[] = [];
+    emitStage("guidance", "Looking up motion guidance…");
+    const rag = relevantGuidance(await retrieveContext(`${prompt}\n${previousPrompt}`, { k: 3, maxChars: GUIDANCE_MAX_CHARS, tags: ["motion", "flux"] }), "clip");
     const ragSources = [...new Set(rag.sources.map((item) => item.title))];
+    emitStage("prompt", "Writing the next shot's prompt…");
     const enhanced = await enhanceShotPrompt({
       projectId: id,
       previousPrompt,
       instruction: prompt,
       referenceImagePath: frameFilePath(frameImageUrl(keyframe)),
       guidance: rag.text,
+      onToken: isStreaming() ? (text) => emitEvent({ type: "token", field: "enhancedPrompt", text }) : undefined,
     });
+    emitEvent({ type: "prompt", enhancedPrompt: enhanced.prompt });
     logInfo("project_append_prompt_enhanced", { projectId: id, source: enhanced.source, length: enhanced.prompt.length });
 
     const target = input.seconds;
     const newFrames: ProjectFrame[] = [];
     for (let shot = 0; shot < shotCount; shot += 1) {
       const shotPrompt = shot === 0 ? enhanced.prompt : `${enhanced.prompt} The action continues naturally from the previous moment.`;
-      const clip = await renderClipFromFrame(keyframe, shotPrompt);
+      // Continue the motion: FLUX 3 v2v from the last ~2s of what comes before (falls back to i2v from its last frame).
+      emitStage("video", shotCount > 1 ? `Generating shot ${shot + 1} of ${shotCount}…` : "Generating the new shot…");
+      const clip = await renderContinuationShot(contextVideo, shotPrompt);
+      continuationModes.push(clip.mode);
       let segmentFile = clip.videoFilename;
       let length = clip.durationSeconds;
       // The last shot is trimmed so the total added time is exactly `seconds`.
@@ -350,9 +381,11 @@ export async function appendToProject(input: AppendInput): Promise<AppendResult>
         segmentUrl: videoUrl(segmentFile),
         source: "generated",
       });
-      if (shot < shotCount - 1) keyframe = await extractLastFrame(videoFilePath(videoUrl(segmentFile)));
+      if (shot < shotCount - 1) contextVideo = videoFilePath(videoUrl(segmentFile));
     }
+    emitStage("render", "Assembling the video…");
     const assembled = await assembleClipProject(project, [...project.frames, ...newFrames]);
+    emitStage("save", "Saving the project…");
     await saveProject(assembled);
     return {
       project: assembled,
@@ -360,8 +393,10 @@ export async function appendToProject(input: AppendInput): Promise<AppendResult>
       addedSeconds: assembled.durationSeconds - before,
       enhancedPrompt: enhanced.prompt,
       ragSources,
+      continuationModes,
     };
   });
+  schedulePublish(result.project, "appended");
   logInfo("project_append_completed", { projectId: id, frames: result.project.frames.length, durationSeconds: result.project.durationSeconds, addedSeconds: result.addedSeconds });
   return {
     ...result,
@@ -380,10 +415,13 @@ export async function cutProjectRange(projectId: string, startSec: number, endSe
   const result = await withProjectLock(projectId, async () => {
     const project = await loadProject(projectId);
     const removed = { startSec: Math.max(0, Math.round(startSec * 1000) / 1000), endSec: Math.min(project.durationSeconds, Math.round(endSec * 1000) / 1000) };
+    emitStage("render", "Cutting and reassembling the video…");
     const updated = await cutRange(project, startSec, endSec);
+    emitStage("save", "Saving the project…");
     await saveProject(updated);
     return { project: updated, removed };
   });
+  schedulePublish(result.project, "cut");
   logInfo("project_cut_completed", { projectId, startSec: result.removed.startSec, endSec: result.removed.endSec, durationSeconds: result.project.durationSeconds });
   return result;
 }

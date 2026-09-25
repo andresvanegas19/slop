@@ -59,7 +59,17 @@ the parent environment explicitly.
 - Generated frames, manifests, audio, text overlays, and MP4s stay under
   `generation-video/output/` and are ignored by Git. Serve assets through the
   existing `/api/assets/[filename]` and `/api/videos/[filename]` routes rather
-  than filesystem paths.
+  than filesystem paths. Storyboards saved by `/api/slop-video` and
+  `/api/generate-preset` go to `generation-video/storyboards/generated/`, which
+  is also ignored by Git.
+- The company agent is the Python package `agent/` at the repository root
+  (`.venv/bin/python -m agent worker`). It is a LangChain text-ReAct agent:
+  Liquid via OpenRouter is the LLM, and its tools (`agent/tools.py`) read
+  `contracts/` models from RawTree `slop_human*` tables and core's `state.db`
+  with code-built, bounded SQL. It serves `POST http://127.0.0.1:8765/context`;
+  `src/lib/company-agent.ts` calls it from every generation route and never
+  throws. Only the distilled `CompanyContext` brief reaches Next/BFL prompts.
+  See `agent/README.md`.
 
 ## Repository-specific conventions
 

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { userContextBlock } from "@/lib/user-context";
 import { createChatCompletion, modelSupportsImages, openRouterModel, type ChatContentPart } from "@/lib/openrouter";
 import { guidanceBlock } from "@/lib/frame-chat";
 import type { Project } from "@/lib/projects";
@@ -81,7 +82,7 @@ const STYLE_TERMS = [
   "low poly", "low-poly", "3d render", "claymation", "clay", "flat design", "flat style", "vector shapes", "editorial illustration",
 ];
 
-function styleTermsIn(text: string) {
+export function styleTermsIn(text: string) {
   const lower = text.toLowerCase();
   return STYLE_TERMS.filter((term) => new RegExp(`\\b${term.replace(/[-\s]/g, "[-\\s]")}\\b`).test(lower));
 }
@@ -109,7 +110,9 @@ function contentWords(text: string) {
 
 /** Placeholder prompts ("From: <title>", "Uploaded video: <file>") say nothing about what the frame looks like. */
 function isPlaceholderPrompt(prompt: string) {
-  return /^(?:from|uploaded video):/i.test(prompt.trim());
+  const text = prompt.trim();
+  // Also: continuation boilerplate from a fallback shot prompt, which describes an action but not what's on screen.
+  return /^(?:from|uploaded video):/i.test(text) || /continue seamlessly from the previous shot/i.test(text);
 }
 
 function fallbackPrompt(currentPrompt: string, instruction: string, draft?: string, guidance?: string) {
@@ -134,6 +137,8 @@ export async function enhanceImagePrompt(input: {
   referenceImagePath?: string;
   /** RAG guidance text (from retrieveContext) added to the system prompt. */
   guidance?: string;
+  /** Streams the raw model output as it is generated (sanitization happens after). */
+  onToken?: (text: string) => void;
 }): Promise<EnhancedPrompt> {
   const frame = input.project.frames[input.index];
   const fallback = fallbackPrompt(frame.prompt, input.instruction, input.draftPrompt, input.guidance);
@@ -160,9 +165,11 @@ export async function enhanceImagePrompt(input: {
     const content: string | ChatContentPart[] = imageUrl
       ? [{ type: "text", text }, { type: "image_url", image_url: { url: imageUrl } }]
       : text;
+    const userContext = await userContextBlock();
     const result = await createChatCompletion({
       model,
-      messages: [{ role: "system", content: SYSTEM + guidanceBlock(input.guidance) }, { role: "user", content }],
+      onToken: input.onToken,
+      messages: [{ role: "system", content: SYSTEM + guidanceBlock(input.guidance) + userContext }, { role: "user", content }],
       // The free LFM model sometimes spends tokens before answering; a low cap truncates mid-sentence.
       maxTokens: 1_500,
       temperature: 0.4,
@@ -174,7 +181,8 @@ export async function enhanceImagePrompt(input: {
       output = end > MIN_LENGTH ? output.slice(0, end + 1) : output;
     }
     let prompt = sanitizeEnhancedPrompt(output);
-    if (prompt && copiesGuidance(prompt, input.guidance, `${frame.prompt} ${input.instruction}`)) {
+    // Past prompts in the user context must not be pasted in either (same guard as guidance).
+    if (prompt && copiesGuidance(prompt, `${input.guidance ?? ""}\n${userContext}`, `${frame.prompt} ${input.instruction}`)) {
       logInfo("prompt_enhance_copied_guidance", { model });
       prompt = undefined;
     }
@@ -216,6 +224,8 @@ export async function enhanceShotPrompt(input: {
   instruction: string;
   referenceImagePath?: string;
   guidance?: string;
+  /** Streams the raw model output as it is generated (sanitization happens after). */
+  onToken?: (text: string) => void;
 }): Promise<EnhancedPrompt> {
   const ownText = `${input.previousPrompt}\n${input.instruction}`;
   const fallback = (dropUnrequestedStyle(
@@ -228,6 +238,12 @@ export async function enhanceShotPrompt(input: {
     if (input.referenceImagePath && await modelSupportsImages(model)) {
       imageUrl = `data:image/png;base64,${(await readFile(input.referenceImagePath)).toString("base64")}`;
     }
+    if (!imageUrl && isPlaceholderPrompt(input.previousPrompt)) {
+      // A text-only model knows nothing about a placeholder-described shot and invents a subject (e.g. a hen from a
+      // guidance example). The continuation clip already carries the visuals, so send only the requested action.
+      logInfo("shot_enhance_skipped_placeholder", { model });
+      return { prompt: fallback, source: "fallback" };
+    }
     const text = [
       `Previous shot prompt: ${input.previousPrompt}`,
       imageUrl ? "The attached image is the last frame of the previous shot; the new shot starts from it." : undefined,
@@ -237,9 +253,11 @@ export async function enhanceShotPrompt(input: {
     const content: string | ChatContentPart[] = imageUrl
       ? [{ type: "text", text }, { type: "image_url", image_url: { url: imageUrl } }]
       : text;
+    const userContext = await userContextBlock();
     const result = await createChatCompletion({
       model,
-      messages: [{ role: "system", content: SHOT_SYSTEM + guidanceBlock(input.guidance) }, { role: "user", content }],
+      onToken: input.onToken,
+      messages: [{ role: "system", content: SHOT_SYSTEM + guidanceBlock(input.guidance) + userContext }, { role: "user", content }],
       maxTokens: 1_500,
       temperature: 0.5,
     });
@@ -249,7 +267,7 @@ export async function enhanceShotPrompt(input: {
       output = end > MIN_LENGTH ? output.slice(0, end + 1) : output;
     }
     let prompt = sanitizeEnhancedPrompt(output);
-    if (prompt && copiesGuidance(prompt, input.guidance, ownText)) {
+    if (prompt && copiesGuidance(prompt, `${input.guidance ?? ""}\n${userContext}`, ownText)) {
       logInfo("shot_prompt_copied_guidance", { model });
       prompt = undefined;
     }

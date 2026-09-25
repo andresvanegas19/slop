@@ -1,4 +1,6 @@
-import { NextResponse } from "next/server";
+import { respondMaybeStreaming, type ActionOutcome } from "@/lib/ndjson";
+import { logUserPrompt } from "@/lib/user-prompts";
+import { ClientAbortedError, emitEvent, emitStage } from "@/lib/progress";
 import { frameAt } from "@/lib/frame-grab";
 import { detectIntent } from "@/lib/intent";
 import {
@@ -22,8 +24,12 @@ export const maxDuration = 800;
 const MAX_MESSAGE_LENGTH = 4_000;
 const round = (value: number) => Math.round(value * 1000) / 1000;
 
-function badRequest(error: string) {
-  return NextResponse.json({ error }, { status: 400 });
+function badRequest(error: string): ActionOutcome {
+  return { status: 400, body: { error } };
+}
+
+function ok(body: Record<string, unknown>): ActionOutcome {
+  return { status: 200, body };
 }
 
 function lastFrame(project: Project) {
@@ -53,12 +59,19 @@ function defaultEditRange(project: Project, atSec: number | undefined): { frame:
  * action (edit_range | answer | append_shot | cut_range | append_attachment) via OpenRouter + keyword rules, then runs
  * the same code as /ask, /append and /cut.
  */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePost(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const body = await request.json().catch(() => ({})) as CommandBody;
+  // `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …same body…}.
+  return respondMaybeStreaming(request, () => runCommand(id, body));
+}
+
+type CommandBody = {
+  message?: unknown; atSec?: unknown; rangeStartSec?: unknown; rangeEndSec?: unknown; uploadId?: unknown; sourceProjectId?: unknown;
+};
+
+async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome> {
   try {
-    const body = await request.json().catch(() => ({})) as {
-      message?: unknown; atSec?: unknown; rangeStartSec?: unknown; rangeEndSec?: unknown; uploadId?: unknown; sourceProjectId?: unknown;
-    };
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message || message.length > MAX_MESSAGE_LENGTH) return badRequest(`A message between 1 and ${MAX_MESSAGE_LENGTH} characters is required.`);
     const finite = (value: unknown) => typeof value === "number" && Number.isFinite(value);
@@ -83,9 +96,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (atSec !== undefined && atSec >= project.durationSeconds) atSec = round(Math.max(0, project.durationSeconds - 1 / 30));
     const contextFrame = (atSec !== undefined ? frameAt(project, atSec) : undefined) ?? lastFrame(project);
 
+    emitStage("guidance", "Looking up guidance…");
     const rag = relevantGuidance(await retrieveContext(`${message}\n${contextFrame.prompt}`, {
       k: 2, maxChars: 800, tags: ["editing", "flux", project.kind === "storyboard" ? "storyboard" : "motion"],
     }), project.kind);
+    emitStage("intent", "Working out what you want…");
     const intent = await detectIntent({
       message,
       project,
@@ -97,6 +112,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
     logInfo("command_intent", { projectId: id, action: intent.action, source: intent.source, atEnd: intent.atEnd });
     const base = { action: intent.action, detectedBy: intent.source, atEnd: intent.atEnd };
+    const announce = (window?: TimeRange) => emitEvent({ type: "intent", ...base, ...(window ? { window } : {}) });
+    if (intent.action !== "edit_range") announce();
 
     switch (intent.action) {
       case "answer": {
@@ -105,15 +122,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           projectId: id, index: contextFrame.index, message, atSec, windowSec: clampWindowSec(undefined), range: usableRange, mode: "answer",
           chatExtra: { action: "answer", summary: "Answered your question" },
         });
-        return NextResponse.json({ ...base, summary: "Answered your question", reply: result.reply, project: result.project, ragSources: result.ragSources });
+        return ok({ ...base, summary: "Answered your question", reply: result.reply, project: result.project, ragSources: result.ragSources });
       }
       case "edit_range": {
         const instruction = intent.params.instruction || message;
         if (project.kind === "storyboard") {
+          announce();
           const index = contextFrame.index;
           const summary = `Edited shot ${index + 1}`;
           const result = await askFrame({ projectId: id, index, message: instruction, atSec, windowSec: clampWindowSec(undefined), mode: "edit", chatExtra: { action: "edit_range", summary } });
-          return NextResponse.json({ ...base, summary, reply: result.reply, project: result.project, enhancedPrompt: result.enhancedPrompt, ragSources: result.ragSources });
+          return ok({ ...base, summary, reply: result.reply, project: result.project, enhancedPrompt: result.enhancedPrompt, ragSources: result.ragSources });
         }
         let target: { frame: ProjectFrame; range: TimeRange; atSec: number };
         if (range) {
@@ -123,12 +141,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         } else {
           target = defaultEditRange(project, atSec);
         }
+        announce(target.range);
         const summary = `Edited ${target.range.startSec}s–${target.range.endSec}s (shot ${target.frame.index + 1})`;
         const result = await askFrame({
           projectId: id, index: target.frame.index, message: instruction, atSec: target.atSec, windowSec: clampWindowSec(undefined), range: target.range, mode: "edit",
           chatExtra: { action: "edit_range", summary },
         });
-        return NextResponse.json({
+        return ok({
           ...base, summary: result.edited ? summary : "No change was made", reply: result.reply, project: result.project,
           ...(result.window ? { window: result.window } : {}), enhancedPrompt: result.enhancedPrompt, ragSources: result.ragSources,
         });
@@ -139,9 +158,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         const shots = result.appendedFrameIndexes.length;
         const summary = `Extended the video by ${result.addedSeconds}s (${shots} new shot${shots === 1 ? "" : "s"})`;
         const updated = await appendChat(id, result.appendedFrameIndex, { text: message }, { text: summary, action: "append_shot", summary, ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}) });
-        return NextResponse.json({
+        return ok({
           ...base, summary, project: updated, appendedFrameIndexes: result.appendedFrameIndexes,
           ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}), ...(result.ragSources ? { ragSources: result.ragSources } : {}),
+          ...(result.continuationModes ? { continuationModes: result.continuationModes } : {}),
         });
       }
       case "cut_range": {
@@ -151,19 +171,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         const summary = `Removed ${result.removed.startSec}s–${result.removed.endSec}s (${removedSeconds}s)`;
         const index = (frameAt(result.project, Math.min(result.removed.startSec, Math.max(0, result.project.durationSeconds - 0.001))) ?? lastFrame(result.project)).index;
         const updated = await appendChat(id, index, { text: message, rangeStartSec: range.startSec, rangeEndSec: range.endSec }, { text: summary, action: "cut_range", summary });
-        return NextResponse.json({ ...base, summary, project: updated, removed: result.removed });
+        return ok({ ...base, summary, project: updated, removed: result.removed });
       }
       case "append_attachment": {
         if (!uploadId && !sourceProjectId) throw new ActionError("Attach a video (or pick one from history) to add it to the end.", 422);
         const result = await appendToProject({ projectId: id, uploadId, sourceProjectId, prompt: uploadId ? message : undefined });
         const summary = `Added the ${uploadId ? "attached video" : "selected video"} at the end (+${result.addedSeconds}s)`;
         const updated = await appendChat(id, result.appendedFrameIndex, { text: message }, { text: summary, action: "append_attachment", summary });
-        return NextResponse.json({ ...base, summary, project: updated, appendedFrameIndexes: result.appendedFrameIndexes });
+        return ok({ ...base, summary, project: updated, appendedFrameIndexes: result.appendedFrameIndexes });
       }
     }
   } catch (error) {
+    if (error instanceof ClientAbortedError) throw error;
     const { status, message } = actionErrorResponse(error, "Unable to run the command.");
     logException("command_failed", error, { projectId: id, status, reason: message });
-    return NextResponse.json({ error: message }, { status });
+    return { status, body: { error: message } };
   }
 }
+
+export const POST = logUserPrompt("command", handlePost);

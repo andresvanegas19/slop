@@ -143,7 +143,7 @@ export async function decideFrameChat(
   project: Project,
   index: number,
   message: string,
-  options: { referenceImagePath?: string; atSec?: number; guidance?: string } = {},
+  options: { referenceImagePath?: string; atSec?: number; guidance?: string; onToken?: (text: string) => void } = {},
 ): Promise<FrameChatDecision> {
   const model = openRouterModel();
   const frame = project.frames[index];
@@ -173,7 +173,7 @@ export async function decideFrameChat(
     { role: "user", content: imageUrl ? userContent : (userContent[0] as { text: string }).text },
   ];
 
-  const result = await createChatCompletion({ model, messages, tools: [editTool(project.kind)], maxTokens: 2_048 });
+  const result = await createChatCompletion({ model, messages, tools: [editTool(project.kind)], maxTokens: 2_048, onToken: options.onToken });
 
   let args: Record<string, unknown> | undefined;
   const call = result.toolCalls.find((item) => item.function?.name === "edit_frame");

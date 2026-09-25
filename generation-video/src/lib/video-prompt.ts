@@ -36,9 +36,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number) {
 
 /**
  * Asks the configured OpenRouter model to turn a short idea into a FLUX 3 video prompt
- * (style → action → camera/light → Audio: → no text). Never throws: failures return the user's prompt.
+ * (style → action → camera/light → Audio: → no text). `companyContext` is the optional company agent brief.
+ * Never throws: failures return the user's prompt.
  */
-export async function writeVideoPrompt(idea: string, clipSeconds: number): Promise<VideoPrompt> {
+export async function writeVideoPrompt(idea: string, clipSeconds: number, companyContext?: string): Promise<VideoPrompt> {
   const model = openRouterModel();
   const startedAt = Date.now();
   try {
@@ -46,7 +47,12 @@ export async function writeVideoPrompt(idea: string, clipSeconds: number): Promi
       model,
       messages: [
         { role: "system", content: system(clipSeconds) },
-        { role: "user", content: `Idea: ${idea}\nWrite the video prompt now.` },
+        {
+          role: "user",
+          content: companyContext
+            ? `Company context (use it only where it fits the idea; never as on-screen text):\n${companyContext}\n\nIdea: ${idea}\nWrite the video prompt now.`
+            : `Idea: ${idea}\nWrite the video prompt now.`,
+        },
       ],
       maxTokens: 1_200,
       temperature: 0.6,

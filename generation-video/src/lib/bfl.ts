@@ -1,5 +1,7 @@
 import { loadEnvConfig } from "@next/env";
 import path from "node:path";
+import { abortableDelay, emitEvent, throwIfClientAborted } from "@/lib/progress";
+import { logInfo } from "@/lib/runtime-log";
 
 const MAX_ATTEMPTS = 3;
 const MAX_POLL_MS = 120_000;
@@ -18,6 +20,8 @@ type PollResponse = {
   error?: string;
   message?: string;
   details?: unknown;
+  /** Some BFL endpoints report 0–1 (or 0–100) progress while processing. */
+  progress?: number;
   result?: { sample?: string };
 };
 
@@ -179,11 +183,24 @@ async function pollForSample(pollingUrl: URL, maxPollMs: number, resultLabel: st
   const deadline = Date.now() + maxPollMs;
   let interval = 500;
   let lastStatus = "unknown";
+  const startedAt = Date.now();
   while (Date.now() < deadline) {
+    // Streaming clients that disconnected stop the wait (the remote job may keep running).
+    throwIfClientAborted();
     const pollResponse = await request(pollingUrl.toString(), { headers: { "x-key": headers()["x-key"] } }, "Polling the BFL job");
     if (!pollResponse.ok) throw await httpError("Could not poll the BFL job", pollResponse);
     const job = await readJson<PollResponse>(pollResponse, "Polling the BFL job");
     lastStatus = job.status ?? "unknown";
+    const progress = typeof job.progress === "number" && Number.isFinite(job.progress)
+      ? Math.min(1, Math.max(0, job.progress > 1 ? job.progress / 100 : job.progress))
+      : undefined;
+    emitEvent({
+      type: "progress",
+      stage: resultLabel === "video" ? "video" : "image",
+      status: lastStatus,
+      ...(progress === undefined ? {} : { progress }),
+      elapsedMs: Date.now() - startedAt,
+    });
     if (job.status === "Ready" && job.result?.sample) return job.result.sample;
     if (job.status === "Ready") throw new BflError(`BFL reported the job as Ready but returned no ${resultLabel} URL.`);
     if (job.status === "Error" || job.status === "Failed") {
@@ -196,7 +213,7 @@ async function pollForSample(pollingUrl: URL, maxPollMs: number, resultLabel: st
     if (job.status === "Task not found") {
       throw new BflError("BFL no longer knows about this job (Task not found). The job may have expired; try again.");
     }
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    await abortableDelay(interval);
     interval = Math.min(interval * 2, 5000);
   }
 
@@ -231,41 +248,112 @@ export async function generateBflImage(
 
 /** FLUX 3 accepts whole-second durations from 5 to 20; shorter clips must be trimmed after download. */
 export const FLUX3_MIN_DURATION_SEC = 5;
+export const FLUX3_MAX_DURATION_SEC = 20;
+const MAX_FINAL_VIDEO_POLL_MS = 900_000;
 
-/**
- * Submits a FLUX 3 video job (`t2v`, or `i2v` with `keyframes`) and returns the short-lived signed MP4 URL.
- * Uses draft mode (fast HD preview) at the minimum duration to keep generation time low.
- */
 /**
  * FLUX 3 keyframes: one image (start), two images (start + end, interpolated), or up to 10 `[seconds, image]` pins.
  * Images are URLs or base64. Passed through as-is.
  */
 export type Flux3Keyframe = string | [number, string];
 
-export async function generateBflVideo(input: {
+/** "draft" = fast HD preview (`draft: true`, `hd`); "final" = full-quality generation delivered at `fhd` (1920x1088). */
+export type VideoQuality = "draft" | "final";
+/** Where a video is generated: storyboards/presets, the first quick clip, or edits/appends/continuations. */
+export type VideoQualityContext = "storyboard" | "clip" | "edit";
+
+const QUALITY_DEFAULTS: Record<VideoQualityContext, VideoQuality> = { storyboard: "final", clip: "final", edit: "draft" };
+
+export function isVideoQuality(value: unknown): value is VideoQuality {
+  return value === "draft" || value === "final";
+}
+
+/**
+ * Resolves the video quality: explicit request option → BFL_VIDEO_QUALITY_<CONTEXT> (STORYBOARD | CLIP | EDIT) →
+ * BFL_VIDEO_QUALITY (all contexts) → defaults (storyboard/clip = final, edit = draft).
+ */
+export function videoQuality(context: VideoQualityContext, requested?: unknown): VideoQuality {
+  if (isVideoQuality(requested)) return requested;
+  loadServerEnvironment();
+  const specific = process.env[`BFL_VIDEO_QUALITY_${context.toUpperCase()}`]?.trim().toLowerCase();
+  if (isVideoQuality(specific)) return specific;
+  const global = process.env.BFL_VIDEO_QUALITY?.trim().toLowerCase();
+  if (isVideoQuality(global)) return global;
+  return QUALITY_DEFAULTS[context];
+}
+
+type QualitySettings = { draft: boolean; resolution: "hd" | "fhd" };
+const QUALITY_LADDER: Record<VideoQuality, QualitySettings[]> = {
+  final: [{ draft: false, resolution: "fhd" }, { draft: false, resolution: "hd" }, { draft: true, resolution: "hd" }],
+  draft: [{ draft: true, resolution: "hd" }],
+};
+// Index into the "final" ladder of the first settings BFL accepted in this process (skip known rejections).
+let acceptedFinalStep = 0;
+
+function qualityRejected(error: unknown) {
+  return error instanceof BflError && (error.status === 400 || error.status === 422)
+    && /resolution|draft|fhd|quality|mode/i.test(error.message);
+}
+
+export type BflVideoResult = { url: string; draft: boolean; resolution: "hd" | "fhd"; quality: VideoQuality };
+
+/**
+ * Submits a FLUX 3 video job (`t2v`, `i2v` with `keyframes`, or `v2v` with `startVideo`) and returns the short-lived
+ * signed MP4 URL plus the quality settings BFL accepted. `quality: "final"` asks for `draft: false` + `fhd`; if BFL
+ * rejects that, it falls back to `hd` and then to a draft (logged via the progress stream).
+ */
+export async function generateBflVideoDetailed(input: {
   prompt: string;
   keyframes?: Flux3Keyframe[];
   generateAudio?: boolean;
   /** Whole seconds, 5–20 (default FLUX3_MIN_DURATION_SEC). */
   durationSec?: number;
-}) {
-  const submissionResponse = await request(videoEndpoint(), {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({
-      mode: input.keyframes?.length ? "i2v" : "t2v",
-      prompt: input.prompt,
-      ...(input.keyframes?.length ? { keyframes: input.keyframes } : {}),
-      duration: input.durationSec ?? FLUX3_MIN_DURATION_SEC,
-      aspect_ratio: "16:9",
-      resolution: "hd",
-      draft: true,
-      generate_audio: input.generateAudio ?? true,
-    }),
-  }, "BFL video request");
-  if (!submissionResponse.ok) {
-    throw await httpError("BFL rejected the video request", submissionResponse);
+  /** Base64 MP4 (or URL) to continue from its final frames → `mode: "v2v"` with `start_video`. */
+  startVideo?: string;
+  /** Default: videoQuality("edit") (draft unless configured). */
+  quality?: VideoQuality;
+  /** Default "16:9". */
+  aspectRatio?: "16:9" | "9:16" | "1:1";
+}): Promise<BflVideoResult> {
+  const quality = input.quality ?? videoQuality("edit");
+  const ladder = QUALITY_LADDER[quality];
+  const first = quality === "final" ? acceptedFinalStep : 0;
+  const duration = Math.min(FLUX3_MAX_DURATION_SEC, Math.max(FLUX3_MIN_DURATION_SEC, Math.round(input.durationSec ?? FLUX3_MIN_DURATION_SEC)));
+  for (let step = first; step < ladder.length; step += 1) {
+    const settings = ladder[step];
+    try {
+      const submissionResponse = await request(videoEndpoint(), {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          mode: input.startVideo ? "v2v" : input.keyframes?.length ? "i2v" : "t2v",
+          prompt: input.prompt,
+          ...(input.startVideo ? { start_video: input.startVideo } : input.keyframes?.length ? { keyframes: input.keyframes } : {}),
+          duration,
+          aspect_ratio: input.aspectRatio ?? "16:9",
+          resolution: settings.resolution,
+          draft: settings.draft,
+          generate_audio: input.generateAudio ?? true,
+        }),
+      }, "BFL video request");
+      if (!submissionResponse.ok) {
+        throw await httpError("BFL rejected the video request", submissionResponse);
+      }
+      const submission = await readJson<Submission>(submissionResponse, "BFL video request");
+      const url = await pollForSample(validatedPollingUrl(submission), settings.draft ? MAX_VIDEO_POLL_MS : MAX_FINAL_VIDEO_POLL_MS, "video");
+      if (quality === "final") acceptedFinalStep = step;
+      return { url, draft: settings.draft, resolution: settings.resolution, quality: settings.draft ? "draft" : "final" };
+    } catch (error) {
+      if (step === ladder.length - 1 || !qualityRejected(error)) throw error;
+      const next = ladder[step + 1];
+      logInfo("bfl_video_quality_fallback", { rejected: `${settings.resolution}/draft=${settings.draft}`, next: `${next.resolution}/draft=${next.draft}`, reason: (error as Error).message.slice(0, 200) });
+      emitEvent({ type: "stage", stage: "video", label: `BFL rejected ${settings.resolution}${settings.draft ? " draft" : ""}; retrying at ${next.resolution}${next.draft ? " draft" : ""}…` });
+    }
   }
-  const submission = await readJson<Submission>(submissionResponse, "BFL video request");
-  return pollForSample(validatedPollingUrl(submission), MAX_VIDEO_POLL_MS, "video");
+  throw new BflError("BFL video request failed: no quality setting was accepted.");
+}
+
+/** Same as generateBflVideoDetailed, returning only the signed MP4 URL. */
+export async function generateBflVideo(input: Parameters<typeof generateBflVideoDetailed>[0]) {
+  return (await generateBflVideoDetailed(input)).url;
 }

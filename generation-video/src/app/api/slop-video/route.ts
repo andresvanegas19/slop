@@ -4,7 +4,9 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { BflError, describeError } from "@/lib/bfl";
 import { RawTreeConfigurationError } from "@/lib/rawtree";
+import { getCompanyContext } from "@/lib/company-agent";
 import { createProject, framesFromStoryboard, videoUrl } from "@/lib/projects";
+import { schedulePublish } from "@/lib/video-store";
 import { logException, logInfo } from "@/lib/runtime-log";
 import {
   SHORT_DURATION_SEC,
@@ -74,6 +76,7 @@ async function handle({ dryRun, includeTestRows }: SlopRequest) {
 
   try {
     logInfo("slop_video_render_started", { runId, scenes: validation.data.scenes.length, includeTestRows });
+    const company = getCompanyContext(validation.data.headline, "storyboard");
     const rendered = await renderStoryboard(validation.data, runId);
     const manifests = path.join(process.cwd(), "output", "manifests");
     await mkdir(manifests, { recursive: true });
@@ -95,6 +98,7 @@ async function handle({ dryRun, includeTestRows }: SlopRequest) {
       frames: framesFromStoryboard(validation.data, rendered.imageFilenames),
       storyboard: validation.data,
     });
+    schedulePublish(project, "storyboard");
     logInfo("slop_video_render_completed", { runId, projectId: project.id, video: rendered.videoFilename });
     return NextResponse.json({
       videoUrl: `/api/videos/${rendered.videoFilename}`,
@@ -104,6 +108,7 @@ async function handle({ dryRun, includeTestRows }: SlopRequest) {
       storyboardPath,
       storyboard,
       project,
+      companyContext: await company,
     });
   } catch (error) {
     return failure(error, "render");

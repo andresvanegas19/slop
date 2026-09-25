@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
+import { logUserPrompt } from "@/lib/user-prompts";
+import { streamable } from "@/lib/ndjson";
+import { emitStage } from "@/lib/progress";
 import { BflError, describeError } from "@/lib/bfl";
 import { CLIP_SECONDS, generateClipFromPrompt } from "@/lib/clip";
+import { companyContextForWriter, getCompanyContext } from "@/lib/company-agent";
 import { createProject, frameImageUrl, titleFromPrompt, videoUrl } from "@/lib/projects";
+import { schedulePublish } from "@/lib/video-store";
 import { logInfo, logException } from "@/lib/runtime-log";
 import { writeVideoPrompt } from "@/lib/video-prompt";
 
 export const runtime = "nodejs";
 
 /** POST `{ prompt }` → OpenRouter writes the FLUX 3 video prompt → exactly CLIP_SECONDS-second FLUX 3 clip + a `kind: "clip"` project with one frame. */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const body = await request.json() as { prompt?: unknown };
     if (typeof body.prompt !== "string" || body.prompt.trim().length === 0 || body.prompt.length > 32_000) {
@@ -17,9 +22,13 @@ export async function POST(request: Request) {
     const prompt = body.prompt.trim();
     logInfo("video_generation_started", { promptLength: prompt.length });
 
-    const videoPrompt = await writeVideoPrompt(prompt, CLIP_SECONDS);
-    logInfo("video_prompt_ready", { source: videoPrompt.source, length: videoPrompt.prompt.length });
+    emitStage("prompt", "Writing the video prompt…");
+    const company = await getCompanyContext(prompt, "video");
+    const videoPrompt = await writeVideoPrompt(prompt, CLIP_SECONDS, companyContextForWriter(company));
+    logInfo("video_prompt_ready", { source: videoPrompt.source, length: videoPrompt.prompt.length, companyContext: Boolean(company) });
+    emitStage("video", "Generating the video…");
     const clip = await generateClipFromPrompt(videoPrompt.prompt);
+    emitStage("save", "Saving the project…");
     const project = await createProject({
       kind: "clip",
       title: titleFromPrompt(prompt),
@@ -36,6 +45,7 @@ export async function POST(request: Request) {
         source: "generated",
       }],
     });
+    schedulePublish(project, "generated");
     logInfo("video_generation_completed", { durationSeconds: CLIP_SECONDS, projectId: project.id, engine: clip.engine });
     return NextResponse.json({ videoUrl: project.videoUrl, durationSeconds: CLIP_SECONDS, videoPrompt: videoPrompt.prompt, videoPromptSource: videoPrompt.source, project });
   } catch (error) {
@@ -45,3 +55,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+/** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
+export const POST = logUserPrompt("new_clip", streamable(handlePost));

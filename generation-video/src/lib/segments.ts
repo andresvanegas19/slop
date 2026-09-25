@@ -184,14 +184,19 @@ export async function spliceWindow(segmentPath: string, replacementPath: string,
   const normalize = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`;
   const filters: string[] = [];
   const parts: string[] = [];
+  // Trim by frame index, not seconds: the fps filter can shift timestamps by half a frame, which made second-based
+  // trims drop or duplicate the frame right at the window boundary.
+  const startFrame = Math.round(start * fps);
+  const endFrame = Math.round(end * fps);
+  const windowFrames = Math.max(1, endFrame - startFrame);
   if (start > 0) {
-    filters.push(`[0:v]${normalize},trim=start=0:end=${start.toFixed(3)},setpts=PTS-STARTPTS[pre]`);
+    filters.push(`[0:v]${normalize},setpts=PTS-STARTPTS,trim=start_frame=0:end_frame=${startFrame},setpts=PTS-STARTPTS[pre]`);
     parts.push("[pre]");
   }
-  filters.push(`[1:v]${normalize},trim=start=0:end=${windowLength.toFixed(3)},setpts=PTS-STARTPTS[mid]`);
+  filters.push(`[1:v]${normalize},setpts=PTS-STARTPTS,trim=start_frame=0:end_frame=${windowFrames},setpts=PTS-STARTPTS[mid]`);
   parts.push("[mid]");
   if (end < total - 0.5 / fps) {
-    filters.push(`[0:v]${normalize},trim=start=${end.toFixed(3)},setpts=PTS-STARTPTS[post]`);
+    filters.push(`[0:v]${normalize},setpts=PTS-STARTPTS,trim=start_frame=${endFrame},setpts=PTS-STARTPTS[post]`);
     parts.push("[post]");
   }
   filters.push(parts.length > 1 ? `${parts.join("")}concat=n=${parts.length}:v=1:a=0[v]` : `${parts[0]}null[v]`);

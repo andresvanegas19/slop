@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { logUserPrompt } from "@/lib/user-prompts";
+import { streamable } from "@/lib/ndjson";
 import { actionErrorResponse, appendToProject } from "@/lib/project-actions";
 import { logException } from "@/lib/runtime-log";
 
@@ -14,7 +16,7 @@ const MAX_PROMPT_LENGTH = 4_000;
  * With `uploadId`: appends the uploaded video as a new segment. Without: generates a new FLUX 3 shot from `prompt`,
  * continuing from the last frame of the current video.
  */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePost(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
     const body = await request.json().catch(() => ({})) as { uploadId?: unknown; prompt?: unknown; sourceProjectId?: unknown; seconds?: unknown };
@@ -36,6 +38,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       appendedFrameIndexes: result.appendedFrameIndexes,
       ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}),
       ...(result.ragSources ? { ragSources: result.ragSources } : {}),
+      ...(result.continuationModes ? { continuationModes: result.continuationModes } : {}),
     });
   } catch (error) {
     const { status, message } = actionErrorResponse(error, "Unable to append to the project.");
@@ -43,3 +46,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+/** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
+export const POST = logUserPrompt("append", streamable(handlePost));

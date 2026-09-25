@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logUserPrompt } from "@/lib/user-prompts";
 import { actionErrorResponse, cutProjectRange } from "@/lib/project-actions";
 import { logException } from "@/lib/runtime-log";
 
@@ -6,7 +7,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /** POST `{ rangeStartSec, rangeEndSec }` → `{ project, removed: { startSec, endSec } }`: removes that project-time range. */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePost(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
     const body = await request.json().catch(() => ({})) as { rangeStartSec?: unknown; rangeEndSec?: unknown };
@@ -22,3 +23,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = logUserPrompt("cut", handlePost);

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { logUserPrompt } from "@/lib/user-prompts";
+import { streamable } from "@/lib/ndjson";
 import { clampWindowSec } from "@/lib/project-edit";
 import { actionErrorResponse, askFrame } from "@/lib/project-actions";
 import { logException } from "@/lib/runtime-log";
@@ -20,7 +22,7 @@ function badRequest(error: string) {
  * Answers about the frame, or edits it and re-renders the video. With `atSec`, the exact video frame at that time
  * is grabbed and used as the reference image (for the model and for the BFL edit).
  */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string; index: string }> }) {
+async function handlePost(request: Request, { params }: { params: Promise<{ id: string; index: string }> }) {
   const { id, index: rawIndex } = await params;
   try {
     const body = await request.json().catch(() => ({})) as {
@@ -70,3 +72,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+/** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
+export const POST = logUserPrompt("ask", streamable(handlePost));

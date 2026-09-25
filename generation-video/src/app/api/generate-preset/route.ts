@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { logUserPrompt } from "@/lib/user-prompts";
+import { streamable } from "@/lib/ndjson";
+import { emitStage } from "@/lib/progress";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -12,7 +15,17 @@ import {
   type PresetId,
   type PresetStoryboard,
 } from "@/lib/presets";
-import { createProject, framesFromStoryboard, videoUrl } from "@/lib/projects";
+import { companyContextForWriter, getCompanyContext } from "@/lib/company-agent";
+import {
+  ResearchAgentError,
+  SESSION_ID,
+  getResearchSession,
+  researchContextForWriter,
+  researchVisualHint,
+  type ResearchSession,
+} from "@/lib/research-agent";
+import { createProject, framesFromStoryboard, isValidProjectId, videoUrl } from "@/lib/projects";
+import { schedulePublish } from "@/lib/video-store";
 import { logException, logInfo } from "@/lib/runtime-log";
 import { renderStoryboard, totalDurationMs } from "@/lib/storyboard-renderer";
 import { validateStoryboard } from "@/lib/storyboard";
@@ -43,10 +56,13 @@ function failure(error: unknown, stage: string, preset: PresetId) {
 }
 
 /**
- * POST `{ preset: "ad" | "company", prompt: string, durationSec?: 5 | 10 | 15 | 30, aspect?: "16:9", dryRun?: boolean }`
- * → `{ videoUrl, durationSeconds, sceneCount, narrationAvailable, storyboard, project }` (dryRun → `{ storyboard }`).
+ * POST `{ preset: "ad" | "company", prompt: string, durationSec?: 5 | 10 | 15 | 30, aspect?: "16:9", dryRun?: boolean,
+ *   researchSessionId?: string }`
+ * → `{ videoUrl, durationSeconds, sceneCount, narrationAvailable, storyboard, project, research? }` (dryRun → `{ storyboard, research? }`).
+ * `researchSessionId` (from POST /api/research) grounds the script in that session's CompanyProfile and the user's
+ * answers, and steers image prompts with its visual identity; without it the company agent brief is used as before.
  */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   let body: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(await request.text());
@@ -82,10 +98,36 @@ export async function POST(request: Request) {
     return responseError('"dryRun" must be a boolean.', 400);
   }
   const dryRun = body.dryRun === true;
+  if (body.researchSessionId !== undefined && (typeof body.researchSessionId !== "string" || !SESSION_ID.test(body.researchSessionId))) {
+    return responseError('"researchSessionId" must be a research session id from POST /api/research (e.g. "research_1a2b…").', 400);
+  }
+
+  let research: ResearchSession | undefined;
+  if (typeof body.researchSessionId === "string") {
+    try {
+      emitStage("prompt", "Reading the company research…");
+      research = await getResearchSession(body.researchSessionId);
+    } catch (error) {
+      const status = error instanceof ResearchAgentError ? error.status : 502;
+      const message = describeError(error, "Unable to read the research session");
+      logException("generate_preset_research_failed", error, { preset, status, message });
+      return responseError(message, status);
+    }
+    if (!research.profile) {
+      return responseError(`Research session ${research.session_id} has no company profile yet (status: ${research.status}); wait for its first round to finish.`, 409);
+    }
+  }
+  const researchInfo = research
+    ? { sessionId: research.session_id, company: research.profile?.name ?? research.company, profileVersion: research.profile?.version, answers: research.answers.length }
+    : undefined;
+  const researchSessionId = typeof body.researchSessionId === "string" && isValidProjectId(body.researchSessionId) ? body.researchSessionId : undefined;
 
   let storyboard: PresetStoryboard;
   try {
-    ({ storyboard } = await buildPresetStoryboard({ preset, prompt, durationSec, aspect }));
+    emitStage("prompt", "Writing the storyboard…");
+    // A research session is specific to this company; the tracked-competitor brief would only add noise then.
+    const companyContext = research ? researchContextForWriter(research) : companyContextForWriter(await getCompanyContext(prompt, "preset"));
+    ({ storyboard } = await buildPresetStoryboard({ preset, prompt, durationSec, aspect, companyContext, visualHint: researchVisualHint(research) }));
   } catch (error) {
     return failure(error, "build", preset);
   }
@@ -99,7 +141,7 @@ export async function POST(request: Request) {
     return responseError(`Generated storyboard is ${totalDurationMs(validation.data) / 1000}s, not exactly ${durationSec}s.`, 500);
   }
 
-  if (dryRun) return NextResponse.json({ storyboard });
+  if (dryRun) return NextResponse.json({ storyboard, ...(researchInfo ? { research: researchInfo } : {}) });
 
   const runId = randomUUID();
   let storyboardPath: string;
@@ -111,6 +153,7 @@ export async function POST(request: Request) {
 
   try {
     logInfo("generate_preset_render_started", { runId, preset, durationSec, scenes: validation.data.scenes.length });
+    emitStage("render", "Generating scenes and rendering the video…");
     const rendered = await renderStoryboard(validation.data, runId);
     const manifests = path.join(process.cwd(), "output", "manifests");
     await mkdir(manifests, { recursive: true });
@@ -125,6 +168,7 @@ export async function POST(request: Request) {
       imageFilenames: rendered.imageFilenames,
       videoFilename: rendered.videoFilename,
     }), { mode: 0o600 });
+    emitStage("save", "Saving the project…");
     const project = await createProject({
       kind: "storyboard",
       title: validation.data.headline,
@@ -132,7 +176,9 @@ export async function POST(request: Request) {
       durationSeconds: rendered.durationSeconds,
       frames: framesFromStoryboard(validation.data, rendered.imageFilenames),
       storyboard: validation.data,
+      ...(researchSessionId ? { researchSessionId } : {}),
     });
+    schedulePublish(project, "preset");
     logInfo("generate_preset_render_completed", { runId, preset, projectId: project.id, video: rendered.videoFilename });
     return NextResponse.json({
       videoUrl: videoUrl(rendered.videoFilename),
@@ -141,8 +187,12 @@ export async function POST(request: Request) {
       narrationAvailable: rendered.narrationAvailable,
       storyboard,
       project,
+      ...(researchInfo ? { research: researchInfo } : {}),
     });
   } catch (error) {
     return failure(error, "render", preset);
   }
 }
+
+/** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
+export const POST = logUserPrompt((body) => (body.preset === "company" ? "preset_company" : "preset_ad"), streamable(handlePost));

@@ -1,5 +1,6 @@
 import { loadEnvConfig } from "@next/env";
 import path from "node:path";
+import { ClientAbortedError, progressSignal } from "@/lib/progress";
 
 const API_BASE = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free";
@@ -75,9 +76,12 @@ function truncate(text: string) {
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, action: string) {
+  const client = progressSignal();
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    return await fetch(url, { ...init, signal: client ? AbortSignal.any([timeout, client]) : timeout });
   } catch (error) {
+    if (client?.aborted) throw new ClientAbortedError();
     if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
       throw new OpenRouterError(`${action} timed out after ${REQUEST_TIMEOUT_MS / 1000}s; OpenRouter or the model may be overloaded, try again.`, 504);
     }
@@ -138,11 +142,14 @@ export async function createChatCompletion(request: {
   tools?: ChatTool[];
   maxTokens?: number;
   temperature?: number;
+  /** When set, the request streams (SSE) and each content delta is passed here as it arrives. */
+  onToken?: (text: string) => void;
 }): Promise<ChatCompletionResult> {
   const key = apiKey();
   const payload = JSON.stringify({
     model: request.model,
     messages: request.messages,
+    ...(request.onToken ? { stream: true } : {}),
     ...(request.tools ? { tools: request.tools, tool_choice: "auto" } : {}),
     max_tokens: request.maxTokens ?? 1_024,
     temperature: request.temperature ?? 0.3,
@@ -159,6 +166,7 @@ export async function createChatCompletion(request: {
   }
   if (!response) throw new OpenRouterError("OpenRouter chat request was not sent.", 502);
   if (!response.ok) throw await httpError("OpenRouter chat request", response);
+  if (request.onToken) return readStream(response, request.model, request.onToken);
 
   const text = await response.text();
   let body: {
@@ -183,4 +191,80 @@ export async function createChatCompletion(request: {
     finishReason: choice.finish_reason,
     model: body.model ?? request.model,
   };
+}
+
+type StreamChunk = {
+  model?: string;
+  error?: { message?: string; code?: number };
+  choices?: {
+    finish_reason?: string | null;
+    delta?: { content?: string | null; tool_calls?: { index?: number; id?: string; type?: string; function?: { name?: string; arguments?: string } }[] };
+  }[];
+};
+
+/**
+ * Reads an OpenRouter SSE stream: `data: {json}` lines (comments like ": OPENROUTER PROCESSING" and `[DONE]` are
+ * ignored; reasoning deltas are not forwarded). Content deltas go to `onToken`; tool-call deltas are accumulated.
+ */
+async function readStream(response: Response, requestedModel: string, onToken: (text: string) => void): Promise<ChatCompletionResult> {
+  if (!response.body) throw new OpenRouterError("OpenRouter returned an empty stream.", 502);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finishReason: string | undefined;
+  let model = requestedModel;
+  const calls: { id?: string; type?: string; function: { name: string; arguments: string } }[] = [];
+  const handle = (line: string) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    let chunk: StreamChunk;
+    try {
+      chunk = JSON.parse(data) as StreamChunk;
+    } catch {
+      return;
+    }
+    if (chunk.error) {
+      throw new OpenRouterError(`OpenRouter chat request failed mid-stream: ${chunk.error.message ?? "unknown upstream error"}${chunk.error.code ? ` (code ${chunk.error.code})` : ""}.`, 502);
+    }
+    if (chunk.model) model = chunk.model;
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+    const delta = choice.delta;
+    if (typeof delta?.content === "string" && delta.content) {
+      content += delta.content;
+      onToken(delta.content);
+    }
+    for (const call of delta?.tool_calls ?? []) {
+      const index = call.index ?? calls.length;
+      calls[index] ??= { function: { name: "", arguments: "" } };
+      if (call.id) calls[index].id = call.id;
+      if (call.type) calls[index].type = call.type;
+      if (call.function?.name) calls[index].function.name += call.function.name;
+      if (call.function?.arguments) calls[index].function.arguments += call.function.arguments;
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        handle(buffer.slice(0, newline).trim());
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    if (buffer.trim()) handle(buffer.trim());
+  } catch (error) {
+    if (progressSignal()?.aborted) throw new ClientAbortedError();
+    if (error instanceof OpenRouterError) throw error;
+    throw new OpenRouterError(`OpenRouter stream broke off: ${error instanceof Error ? error.message : String(error)}.`, 502);
+  } finally {
+    reader.releaseLock();
+  }
+  return { content, toolCalls: calls.filter(Boolean), finishReason, model };
 }

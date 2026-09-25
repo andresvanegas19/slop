@@ -4,21 +4,24 @@ tags: [storyboard, style, narration, house-style]
 # Studio storyboard house style
 
 ## Visual style prefix
-Every image prompt starts with the same style prefix (from storyboards/project_mgmt_this_week.json):
-"Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos."
-Keep this prefix unchanged on every scene so the frames read as one video. Then add one short visual metaphor for the scene.
+Every scene is real footage that feels filmed on a phone by someone who is there, never an illustration or a slide. Every image prompt starts with the same style prefix:
+"Handheld smartphone footage, slight natural sway, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, candid real people, no text, letters or logos in frame."
+Keep this prefix unchanged on every scene so the shots read as one video, then describe one real human moment for the scene.
 
-## Palette
-Deep navy #0B1B3A background, teal #14B8A6 and coral #F97360 accents, off-white #F8FAFC highlights. Stay in this palette; avoid introducing new dominant colors. Format is 16:9 at 1920x1080.
+## Light and color
+Use the light that is actually there: golden hour, window light, street light at dusk, the glow of a laptop in a dim room. Color stays true to life with gentle warmth and natural contrast, as a good phone camera captures it. No studio lighting, no neon palettes, no flat graphic backgrounds. Default format is 16:9 at 1920x1080; 9:16 (1080x1920) suits the phone look for vertical feeds.
 
 ## No text in images
-Images contain no text, letters, numbers, logos, UI labels or charts with legible values. All words (headlines, competitor names, percentages) are overlaid later from on_screen_text. When a scene is about a number ("-20%"), show it as a visual metaphor — a price tag sliced in half, a shrinking bar — never as written digits.
+Frames contain no text, letters, numbers, logos, UI labels or charts with legible values. Words (headlines, competitor names, percentages) live in the narration, and at most a small caption on the final scene. When a scene is about a number ("-20%"), show the human reaction to it — a raised eyebrow at a phone, a teammate leaning in to look — never written digits.
 
-## Visual metaphors
-Each scene's image is one simple object-level metaphor: a price tag cut by a glowing blade, a staircase with a new glowing step, a doorway closing with small figures left outside, a constellation of glowing nodes with a few brighter than the rest. Concrete objects, small generic figures, no real brands or recognizable people.
+## Human moments instead of metaphors
+Each scene shows one candid moment with genuine emotion: a product manager reading pricing news on her phone at dawn by the kitchen window, a team leaning in around a laptop and reacting, two colleagues exchanging a look in a hallway, someone exhaling and smiling as a plan comes together. Hands, faces and small gestures carry the story. No real brands or recognizable public figures.
+
+## Camera: one phone-like move per scene
+Pick exactly one move: walking follow, slow push in by hand, quick reframe, over-the-shoulder, handheld pan, or a handheld hold with gentle sway. Intimate close and medium framing at eye level. Shots are joined with short crossfades (about 0.4 s).
 
 ## Narration length
 Narration is short and punchy: about 2.5 words per second at most, so a 3 s scene gets ~7 words and a 4 s scene ~10. If narration is too long, cut it rather than extending the scene: drop filler, use numbers as spoken words, keep one fact per line ("Taskwave cut Pro pricing twenty percent.").
 
 ## One idea per scene
-Each scene carries a single idea — one competitor move, one takeaway. Scene durations are 3–4 s; typical structure: title scene, one scene per key change, a "quiet" scene summarizing the rest, and an outro restating the biggest opening. Motion is gentle (slow push in, slow zoom out) with 0.3 s crossfades between scenes.
+Each scene carries a single idea — one competitor move, one takeaway, one feeling. Typical structure: an opening moment that sets the day, one scene per key change, a quieter scene that sums up the rest, and a closing moment that lands the biggest opening. Moments over products.

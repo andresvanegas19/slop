@@ -1,4 +1,5 @@
 import { createChatCompletion, openRouterModel } from "@/lib/openrouter";
+import { userContextBlock } from "@/lib/user-context";
 import { titleFromPrompt } from "@/lib/projects";
 import { retrieveContext } from "@/lib/rag";
 import { logException, logInfo } from "@/lib/runtime-log";
@@ -421,11 +422,15 @@ export function parseSceneLines(raw: string, count: number): ParsedScene[] {
   return result;
 }
 
-async function writeWithLlm(definition: PresetDefinition, roles: Role[], durations: number[], prompt: string) {
+async function writeWithLlm(definition: PresetDefinition, roles: Role[], durations: number[], prompt: string, companyContext?: string) {
   const rag = await retrieveContext(`${prompt} ${definition.ragQuery}`, { k: 3, maxChars: 1_200, tags: definition.ragTags });
+  const userContext = await userContextBlock({ maxChars: 800 });
   const messages = [
-    { role: "system" as const, content: systemPrompt(definition, roles, durations, rag.text) },
-    { role: "user" as const, content: `Brief: ${prompt}\n\nWrite all ${roles.length} scenes now.` },
+    { role: "system" as const, content: systemPrompt(definition, roles, durations, rag.text) + userContext },
+    {
+      role: "user" as const,
+      content: `${companyContext ? `Company context (true, current facts; use what fits the brief, never invent numbers):\n${companyContext}\n\n` : ""}Brief: ${prompt}\n\nWrite all ${roles.length} scenes now.`,
+    },
   ];
   try {
     // The default model reasons before answering (~900 hidden tokens), so the budget must cover reasoning + script.
@@ -455,6 +460,10 @@ export async function buildPresetStoryboard(input: {
   prompt: string;
   durationSec: PresetDuration;
   aspect?: PresetAspect;
+  /** Optional company agent brief (see company-agent.ts) or research profile (see research-agent.ts). */
+  companyContext?: string;
+  /** Optional visual-only direction appended to every image prompt (no digits, no text/logos; see researchVisualHint). */
+  visualHint?: string;
 }): Promise<{ storyboard: PresetStoryboard; source: PresetTextSource }> {
   const definition = PRESETS[input.preset];
   const prompt = input.prompt.replace(/\s+/g, " ").trim();
@@ -462,7 +471,7 @@ export async function buildPresetStoryboard(input: {
   const totalMs = input.durationSec * 1000;
   const durations = planDurationsMs(totalMs, roles.length);
   const subject = subjectFromPrompt(prompt);
-  const { parsed, guidance } = await writeWithLlm(definition, roles, durations, prompt);
+  const { parsed, guidance } = await writeWithLlm(definition, roles, durations, prompt, input.companyContext);
 
   let llmFields = 0;
   let startMs = 0;
@@ -487,7 +496,7 @@ export async function buildPresetStoryboard(input: {
       type: role.type,
       narration,
       on_screen_text: { headline },
-      image_prompt: `${definition.promptPrefix} ${visual}`,
+      image_prompt: `${definition.promptPrefix} ${visual}${input.visualHint ?? ""}`,
       motion: index === 0 ? "slow zoom out" : "slow push in",
       transition_out: CROSSFADE,
       change_ids: [],

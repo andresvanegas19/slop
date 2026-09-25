@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { NextResponse } from "next/server";
 import { BflError, describeError, generateBflImage } from "@/lib/bfl";
+import { companyVisualHint, getCompanyContext } from "@/lib/company-agent";
 import { logInfo, logException } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
@@ -37,7 +38,8 @@ export async function POST(request: Request) {
     const frameDirectory = path.join(root, "frames");
     const videoDirectory = path.join(root, "videos");
     await Promise.all([mkdir(frameDirectory, { recursive: true }), mkdir(videoDirectory, { recursive: true })]);
-    const visualBible = "Maintain the same subject, wardrobe, environment, lighting, color grade, and visual style across every shot.";
+    const company = await getCompanyContext(body.prompt.trim(), "multishot");
+    const visualBible = `Maintain the same subject, wardrobe, environment, lighting, color grade, and visual style across every shot.${companyVisualHint(company, 240)}`;
     const shotDirections = [
       `Shot 1 of 3, establish the scene with one simple action in a wide shot. ${body.prompt.trim()}`,
       `Shot 2 of 3, continue directly from the reference frame. Develop the action in a medium shot; preserve screen direction. ${body.prompt.trim()}`,

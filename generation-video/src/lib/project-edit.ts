@@ -5,6 +5,7 @@ import { assembleClipProject } from "@/lib/clip-project";
 import { frameFilePath, frameImageUrl, framesFromStoryboard, migrateProject, videoUrl, type Project, type ProjectFrame } from "@/lib/projects";
 import { renderPinnedClip } from "@/lib/pinned-clip";
 import { extractFrameAt, spliceWindow, videoFilePath } from "@/lib/segments";
+import { emitEvent, emitStage } from "@/lib/progress";
 import { logInfo } from "@/lib/runtime-log";
 import { validateStoryboard, type Storyboard, type StoryboardOnScreenText } from "@/lib/storyboard";
 import { imageSize, renderStoryboard } from "@/lib/storyboard-renderer";
@@ -119,9 +120,12 @@ export async function applyFrameEdit(project: Project, index: number, edit: Fram
 
   if (project.kind === "clip") {
     if (!edit.image_prompt) return project;
+    emitStage("image", "Editing the frame…");
     const image = await generateFrameImage(editInstruction(edit.image_prompt), {
       inputImagePath: options.referenceImagePath ?? frameFilePath(frame.imageUrl),
     });
+    emitEvent({ type: "preview", imageUrl: frameImageUrl(image.filename), label: "Edited frame" });
+    emitStage("video", "Generating the video…");
     const clip = await renderClipFromFrame(image.filename, edit.image_prompt);
     // Only this frame's segment is replaced; the other segments' files are reused as-is and re-concatenated.
     const migrated = migrateProject(project);
@@ -135,6 +139,7 @@ export async function applyFrameEdit(project: Project, index: number, edit: Fram
           source: "generated" as const,
         }
       : item);
+    emitStage("render", "Assembling the video…");
     const assembled = await assembleClipProject(migrated, frames);
     logInfo("frame_edit_completed", { projectId: project.id, index, segment: clip.videoFilename, video: assembled.videoUrl });
     return { ...assembled, updatedAt: now };
@@ -165,15 +170,18 @@ export async function applyFrameEdit(project: Project, index: number, edit: Fram
   const sceneImagePaths = project.frames.map((item) => frameFilePath(item.imageUrl));
   if (edit.image_prompt) {
     const size = imageSize(updated);
+    emitStage("image", "Editing the frame…");
     const image = await generateFrameImage(editInstruction(edit.image_prompt, Boolean(options.referenceImagePath)), {
       width: size.width,
       height: size.height,
       inputImagePath: options.referenceImagePath ?? sceneImagePaths[index],
     });
     sceneImagePaths[index] = frameFilePath(frameImageUrl(image.filename));
+    emitEvent({ type: "preview", imageUrl: frameImageUrl(image.filename), label: "Edited frame" });
   }
 
   const runId = randomUUID();
+  emitStage("render", "Rendering the storyboard…");
   const rendered = await renderStoryboard(updated, runId, { sceneImagePaths });
   logInfo("frame_edit_completed", { projectId: project.id, index, video: rendered.videoFilename });
   return {
@@ -216,7 +224,9 @@ async function applyMomentEdit(project: Project, index: number, prompt: string, 
     extractFrameAt(segmentPath, Math.max(localStart, localEnd - 1 / 30)),
     extractFrameAt(segmentPath, momentLocal),
   ]);
+  emitStage("image", "Editing the frame…");
   const image = await generateFrameImage(editInstruction(prompt), { inputImagePath: frameFilePath(frameImageUrl(momentFrame)) });
+  emitEvent({ type: "preview", imageUrl: frameImageUrl(image.filename), label: "Edited frame" });
   const editedPath = frameFilePath(frameImageUrl(image.filename));
   const pins = length >= 0.6
     ? [
@@ -229,8 +239,10 @@ async function applyMomentEdit(project: Project, index: number, prompt: string, 
         { atSec: 0, imagePath: editedPath },
         { atSec: Math.max(0, length - 1 / 30), imagePath: frameFilePath(frameImageUrl(endFrame)) },
       ];
+  emitStage("video", "Generating the video…");
   const clip = await renderPinnedClip({ prompt, pins, lengthSec: length });
   logInfo("moment_edit_clip_rendered", { projectId: project.id, index, timestamps: clip.timestampFormat, pins: pins.length, lengthSec: Math.round(length * 1000) / 1000 });
+  emitStage("splice", "Splicing the new moment into the shot…");
   const spliced = await spliceWindow(segmentPath, videoFilePath(videoUrl(clip.videoFilename)), localStart, localEnd);
 
   // The key image only changes when the edited frame itself opens the segment (short windows at the segment start).
@@ -243,6 +255,7 @@ async function applyMomentEdit(project: Project, index: number, prompt: string, 
         edits: [...(item.edits ?? []), { atSec: moment.atSec, ...(moment.range ? {} : { windowSec: moment.windowSec ?? MOMENT_WINDOW.default }), ...window, prompt, at: now }],
       }
     : item);
+  emitStage("render", "Assembling the video…");
   const assembled = await assembleClipProject(project, frames);
   logInfo("moment_edit_completed", { projectId: project.id, index, segment: spliced.filename, video: assembled.videoUrl, durationSeconds: assembled.durationSeconds });
   return { ...assembled, updatedAt: now };

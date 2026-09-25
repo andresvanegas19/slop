@@ -134,6 +134,23 @@ def test_storyboard_is_contract_valid_and_round_trips(world):
     assert "slop_human_build" in queued and "slop_human_patch_events" in queued and "slop_human_run_events" in queued
 
 
+def test_storyboard_style_is_phone_footage_of_people(world):
+    repo, src, _, coord = world
+    src.add(env("notion", BASE), env("linear", {"Free": 0, "Basic": 10}), env("jira", {"Standard": 7.91}))
+    coord.run_cycle(T0)
+    src.add(env("notion", dict(BASE, Plus=8), minutes=60), env("notion", dict(BASE, Plus=8), minutes=61))
+    _, sb, _ = coord.run_cycle(T0 + timedelta(hours=1))
+    assert sb.style.style_id == "phone-footage-v1"
+    assert sb.style.prompt_prefix.startswith("Handheld smartphone footage")
+    for scene in sb.scenes:
+        prompt = scene.image_prompt.lower()
+        assert prompt.startswith("handheld smartphone footage") and "no text, letters, numbers or logos" in prompt
+        for banned in ("isometric", "illustration", "vector", "navy", "node", "constellation", "abstract"):
+            assert banned not in prompt, (scene.type, banned)
+        visual = prompt[len(sb.style.prompt_prefix):]
+        assert any(w in visual for w in ("people", "woman", "owner", "founder", "coworkers", "team", "worker")), visual
+
+
 def test_state_stays_flat_over_many_unchanged_cycles(world):
     repo, src, liquid, coord = world
     sizes = []

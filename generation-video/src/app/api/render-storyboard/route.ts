@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { logUserPrompt } from "@/lib/user-prompts";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { BflError, describeError } from "@/lib/bfl";
+import { getCompanyContext } from "@/lib/company-agent";
 import { createProject, framesFromStoryboard, videoUrl } from "@/lib/projects";
+import { schedulePublish } from "@/lib/video-store";
 import { logInfo, logException } from "@/lib/runtime-log";
 import { renderStoryboard, totalDurationMs } from "@/lib/storyboard-renderer";
 import { validateStoryboard, type Storyboard } from "@/lib/storyboard";
@@ -49,7 +52,7 @@ function renderIssues(storyboard: Storyboard) {
   return issues;
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const contentLength = Number(request.headers.get("content-length"));
     if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
@@ -82,6 +85,9 @@ export async function POST(request: Request) {
     await writeFile(path.join(manifests, `${runId}.storyboard.json`), JSON.stringify(validation.data), { mode: 0o600 });
 
     logInfo("storyboard_render_started", { runId, scenes: validation.data.scenes.length, durationMs: totalDurationMs(validation.data) });
+    // Submitted storyboards are rendered as validated; the company agent is triggered alongside and its brief is
+    // returned for review, never merged into the storyboard.
+    const company = getCompanyContext(validation.data.headline, "storyboard");
     const rendered = await renderStoryboard(validation.data, runId);
     const manifest = {
       runId,
@@ -101,6 +107,7 @@ export async function POST(request: Request) {
       frames: framesFromStoryboard(validation.data, rendered.imageFilenames),
       storyboard: validation.data,
     });
+    schedulePublish(project, "storyboard");
     logInfo("storyboard_render_completed", { runId, projectId: project.id, scenes: manifest.sceneCount, durationMs: totalDurationMs(validation.data) });
     return NextResponse.json({
       videoUrl: `/api/videos/${rendered.videoFilename}`,
@@ -108,6 +115,7 @@ export async function POST(request: Request) {
       sceneCount: manifest.sceneCount,
       narrationAvailable: rendered.narrationAvailable,
       project,
+      companyContext: await company,
     });
   } catch (error) {
     const status = error instanceof BflError && error.status && error.status >= 400 && error.status < 500 ? error.status : 502;
@@ -120,3 +128,5 @@ export async function POST(request: Request) {
     return responseError(message, status);
   }
 }
+
+export const POST = logUserPrompt("storyboard", handlePost);

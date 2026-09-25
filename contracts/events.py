@@ -15,6 +15,7 @@ class EventType(str, Enum):
     model_call = "model_call"
     media = "media"
     evaluation = "evaluation"
+    research = "research"
 
 
 class OutboxEvent(BaseModel):
