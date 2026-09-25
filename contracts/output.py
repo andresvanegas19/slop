@@ -75,6 +75,34 @@ class Storyboard(BaseModel):
         return self
 
 
+class StoryboardRecord(BaseModel):
+    """One row in RawTree `slop_human_build`: how B hands a storyboard to C.
+
+    The storyboard travels as one JSON string: RawTree flattens nested objects into
+    dotted columns, which would mangle the list of scenes.
+    C polls for storyboards with no `done` MediaJob in slop_human_media_events.
+    """
+    storyboard_id: str
+    run_id: str
+    created_at: datetime
+    patch_ids: str                      # comma-separated, for filtering in SQL
+    title: str
+    total_duration_sec: float
+    scene_count: int
+    is_test: bool = False               # rows can't be deleted, so test rows are flagged and C skips them
+    storyboard_json: str
+    schema_version: str = SCHEMA_VERSION
+
+    @classmethod
+    def from_storyboard(cls, sb: "Storyboard", run_id: str, created_at: datetime, is_test: bool = False):
+        return cls(storyboard_id=sb.storyboard_id, run_id=run_id, created_at=created_at,
+                   patch_ids=",".join(sb.patch_ids), title=sb.title, total_duration_sec=sb.total_duration_sec,
+                   scene_count=len(sb.scenes), is_test=is_test, storyboard_json=sb.model_dump_json())
+
+    def storyboard(self) -> "Storyboard":
+        return Storyboard.model_validate_json(self.storyboard_json)
+
+
 class MediaStatus(str, Enum):
     queued = "queued"
     running = "running"
