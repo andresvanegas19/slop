@@ -30,7 +30,7 @@ flowchart LR
         MG -->|yes| SB[Storyboard]
     end
 
-    SB -->|storyboard.json| MJ
+    SB -->|RawTree: slop_human_build| MJ
 
     subgraph C[C · Output]
         MJ[MediaJob] --> BFL[Black Forest Labs]
@@ -43,7 +43,7 @@ flowchart LR
 | Workstream | Owns | Writes | Never touches |
 |---|---|---|---|
 | **A · Acquisition** | Sources, Nimble recipes, normalization, hashing, retrieval status | `slop_human` (observations) | Beliefs, patches |
-| **B · State core** | Change gate, Liquid calls, validation, reducer, beliefs, outbox, meaningfulness, storyboard, run metrics | SQLite state + outbox; `slop_human_{patch,run,model_call,evaluation}_events`; `storyboard.json` | Raw pages after reading them |
+| **B · State core** | Change gate, Liquid calls, validation, reducer, beliefs, outbox, meaningfulness, storyboard, run metrics | SQLite state + outbox; `slop_human_{patch,run,model_call,evaluation}_events`; `slop_human_build` | Raw pages after reading them |
 | **C · Output** | Rendering the storyboard with BFL, overlays, voiceover, assembly | `slop_human_media_events`; media files | Beliefs; C never adds facts |
 
 ## Contracts at each boundary
@@ -56,7 +56,7 @@ All in [`contracts/`](../contracts). Pydantic v2.
 | **A → B** | `EvidenceEnvelope` | `evidence.py` | RawTree table `slop_human` |
 | B internal | `StateSlice`, `Belief`, `Patch`, `PatchOp`, `PatchDecision` | `state.py` | SQLite |
 | B → RawTree | `OutboxEvent`, `RunRecord`, `ModelCallRecord` | `events.py` | RawTree `slop_human_*_events` |
-| **B → C** | `Storyboard`, `Scene`, `Claim`, `StyleGuide` | `output.py` | `storyboard.json` |
+| **B → C** | `StoryboardRecord` wrapping `Storyboard`, `Scene`, `Claim`, `StyleGuide` | `output.py` | RawTree `slop_human_build` |
 | C | `MediaJob` | `output.py` | RawTree `slop_human_media_events` |
 
 The contracts enforce the PRD's rules at the type level:
@@ -74,7 +74,8 @@ The contracts enforce the PRD's rules at the type level:
 5. The result becomes a `Patch`, and the `PatchValidator` accepts or rejects it with reasons.
 6. The `Reducer` applies accepted ops to `Belief` and writes an `OutboxEvent` in the same SQLite transaction, then the outbox delivers to RawTree.
 7. The `MeaningfulnessGate` scores accepted ops. If any pass, B writes a `Storyboard`.
-8. **C** renders it as `MediaJob`s. A render failure never touches state.
+8. B inserts it as a `StoryboardRecord` into `slop_human_build`.
+9. **C** renders it as `MediaJob`s. A render failure never touches state.
 
 What Liquid sees each call is bounded by one entity's beliefs plus one new page. It does not grow with the number of cycles, and `RunRecord.state_tokens` is what proves it in the demo.
 
@@ -87,3 +88,20 @@ What Liquid sees each call is bounded by one entity's beliefs plus one new page.
 | Local files | HTML/screenshots (optional), media | Large blobs |
 
 RawTree is shared with other hackathon teams: only ever read and write tables starting with `slop_human`.
+
+## B → C handoff via `slop_human_build`
+
+A, B and C run on different machines, so storyboards travel through RawTree rather than a local file.
+
+- **B** inserts a `StoryboardRecord`: metadata columns plus the full `Storyboard` as one JSON string (`storyboard_json`). RawTree would flatten a nested scene list into dotted columns.
+- **C** polls for storyboards that aren't rendered yet, then parses them with `StoryboardRecord(**row).storyboard()`:
+
+  ```sql
+  SELECT * FROM slop_human_build
+  WHERE is_test = false
+    AND storyboard_id NOT IN (SELECT storyboard_id FROM slop_human_media_events WHERE status = 'done')
+  ORDER BY created_at
+  ```
+
+- **C** records progress by inserting `MediaJob` rows into `slop_human_media_events`. RawTree rows are never updated, only added.
+- A corrected storyboard gets a new `storyboard_id`. Test rows set `is_test = true`.

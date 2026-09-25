@@ -33,11 +33,11 @@ What each service actually did when tested on 2026-09-25, as input to [PRD.md](.
 | Finding | Evidence | Consequence |
 |---|---|---|
 | **One database shared by all hackathon teams** | 34 foreign tables in `GET /v1/tables` (`aura_*`, `beluga_*`, `horizon_*` …) | Prefix every table `slop_human` (DECISIONS D5). Store only public data; anyone at the event can read it |
-| Tables are created by the first insert; no schema up front | `POST /v1/tables/{name}` creates it; every column type is `Dynamic` | The schema lives in `contracts/`, not in the DB. An empty table has no columns |
+| Tables are created by the first insert; no schema up front | `POST /v1/tables/{name}` creates it; every column type is `Dynamic`. Explicit `POST /v1/tables` returns 403 "requires admin permission" with our key | The schema lives in `contracts/`, not in the DB. An empty table has no columns |
 | Nested objects become dotted columns | `section_hashes: {pricing: …}` → column `section_hashes.pricing` | Query with backticks: `` `section_hashes.pricing` `` |
 | `fetched_at` stored as a timestamp with nanoseconds | Returned as `2026-09-25 19:46:50.861059000` | Cursor on `toString(fetched_at)` |
 | A new table is queryable only after ~3 s | Immediate query → `UNKNOWN_IDENTIFIER`; worked 3 s later | Retry reads on a new table |
-| **No documented delete, truncate or drop** | API, CLI (`rtree table …`) and MCP list none | Test rows are permanent: tag them with a `run_id` and filter them out |
+| **Delete needs admin; our key isn't admin** | `DELETE /v1/tables/{table}` exists in the API reference but requires admin; there's no row-level delete | Our rows are effectively permanent. Tag test rows and filter them out. Upside: teams sharing the non-admin key can't delete our tables |
 | Fast | insert 0.4–0.8 s; query 0.1–0.2 s | Not a bottleneck |
 | Useful endpoints | `GET /v1/tables/{name}` returns columns and row count; `POST /v1/query {"sql": …}` returns rows | See `show_columns.py` |
 
