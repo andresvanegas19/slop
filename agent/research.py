@@ -372,8 +372,9 @@ class ResearchSession:
         if company or limit != 5 or self._videos is None:
             try:
                 got = recent_videos(self.reader, limit, company or self.company, [self.sid])
-            except Exception as e:
+            except Exception as e:  # optional context: the round goes on, the tool reports it, and it is logged
                 got = {"videos": [], "error": "{}: {}".format(type(e).__name__, str(e)[:200])}
+                event(log, "research_recent_videos_failed", logging.WARNING, error=got["error"])
             if company or limit != 5:
                 return got
             self._videos = got
@@ -387,8 +388,9 @@ class ResearchSession:
             else:
                 try:
                     got = user_context(self.reader, self.state.user_id, limit)
-                except Exception as e:
+                except Exception as e:  # optional context, as above
                     got = {"prompts": [], "error": "{}: {}".format(type(e).__name__, str(e)[:200])}
+                    event(log, "research_user_context_failed", logging.WARNING, error=got["error"])
             if limit != 15:
                 return got
             self._user_ctx = got

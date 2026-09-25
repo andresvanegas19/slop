@@ -1,6 +1,6 @@
 import { loadEnvConfig } from "@next/env";
 import path from "node:path";
-import { currentTrace, logInfo } from "@/lib/runtime-log";
+import { currentTrace, logException, logInfo, logWarn } from "@/lib/runtime-log";
 
 /**
  * Client for the local Python company agent (`python -m agent worker`, see agent/README.md).
@@ -31,10 +31,14 @@ function settings() {
   try {
     url = new URL(raw);
   } catch {
+    logWarn("company_agent_misconfigured", { reason: "AGENT_URL is not a valid URL" });
     url = undefined;
   }
   // The agent only listens on loopback; refuse anything else so prompts never leave the machine this way.
-  if (url && !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) url = undefined;
+  if (url && !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+    logWarn("company_agent_misconfigured", { reason: "AGENT_URL must point at 127.0.0.1/localhost", host: url.hostname });
+    url = undefined;
+  }
   const timeout = Number(process.env.AGENT_TIMEOUT_MS);
   return {
     url,
@@ -87,7 +91,10 @@ export async function getCompanyContext(prompt: string, kind: CompanyKind): Prom
     logInfo("company_agent_context", { kind, contextId: context.contextId, stale: context.stale, claims: claims.length, elapsedMs: Date.now() - startedAt });
     return context;
   } catch (error) {
-    logInfo("company_agent_unavailable", { kind, reason: error instanceof Error ? error.name : "unknown", elapsedMs: Date.now() - startedAt });
+    // Not running / timed out is expected (generation goes on without context); anything else is a bug to see.
+    const expected = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError" || error.message === "fetch failed");
+    if (expected) logInfo("company_agent_unavailable", { kind, reason: error.name, error: error.message, elapsedMs: Date.now() - startedAt });
+    else logException("company_agent_failed", error, { kind, elapsedMs: Date.now() - startedAt });
     return null;
   }
 }

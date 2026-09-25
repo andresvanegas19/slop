@@ -29,8 +29,7 @@ from core.logs import event, in_context
 from .research_tools import MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, clean_quote, norm, quote_in_page
 from .story_llm import JsonLlm
 from .web import (EXPECTED_FETCH_ERRORS, HostNotAllowed, Page, compact, fetch_error_reason, home_guard, home_problem,
-                  host_of, link_category, normalize_url,
-                  prioritized_links, site_of, slugs)
+                  host_of, link_category, normalize_url, prioritized_links, site_of, slugs)
 
 log = logging.getLogger("agent.competitors")
 

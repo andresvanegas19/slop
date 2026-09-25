@@ -136,7 +136,9 @@ async function readJob(id: string): Promise<JobRecord | null> {
   let job: JobRecord;
   try {
     job = JSON.parse(await readFile(jobFile(id), "utf8")) as JobRecord;
-  } catch {
+  } catch (error) {
+    // No file is just an unknown job; an unreadable or corrupt one is reported as unknown too, but logged.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") logException("job_file_unreadable", error, { jobId: id });
     return null;
   }
   // Every job this process runs is in the registry (which survives HMR), so a running/queued job that is only on disk
@@ -145,7 +147,7 @@ async function readJob(id: string): Promise<JobRecord | null> {
     job.status = "interrupted";
     job.error = "Interrupted by a server restart.";
     job.updatedAt = new Date().toISOString();
-    await writeJob(job).catch(() => undefined);
+    await writeJob(job).catch((error: unknown) => logException("job_save_failed", error, { jobId: id, status: job.status }));
     logInfo("job_interrupted", { jobId: id, kind: job.kind });
   }
   return job;

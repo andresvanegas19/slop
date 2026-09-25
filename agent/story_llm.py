@@ -10,7 +10,7 @@ from typing import Optional
 
 from langchain_core.messages import HumanMessage
 
-from core.logs import in_context
+from core.logs import event, in_context
 
 from .react import SPECIAL_TOKEN_RE, _text, loose_json
 
@@ -41,16 +41,24 @@ class JsonLlm:
         except FutureTimeout:
             with self.lock:
                 self.failures += 1
-            log.info("liquid call timed out after %ss", timeout_s)
+            event(log, "liquid_call_timed_out", logging.WARNING, model=self.model, timeoutS=timeout_s)
             return None
         except Exception as e:
             with self.lock:
                 self.failures += 1
-            log.warning("liquid call failed: %s", type(e).__name__)
+            # event() scrubs key-looking strings, so the provider's message (429, 401, bad model …) is safe to keep.
+            event(log, "liquid_call_failed", logging.WARNING, model=self.model,
+                  error="{}: {}".format(type(e).__name__, str(e)[:300]))
             return None
         usage = getattr(message, "usage_metadata", None) or {}
         with self.lock:
             self.calls += 1
             self.tokens += (usage.get("input_tokens", 0) or 0) + (usage.get("output_tokens", 0) or 0)
-        got = loose_json(SPECIAL_TOKEN_RE.sub("", _text(message)))
-        return got if isinstance(got, dict) else None
+        text = SPECIAL_TOKEN_RE.sub("", _text(message))
+        got = loose_json(text)
+        if not isinstance(got, dict):
+            with self.lock:
+                self.failures += 1
+            event(log, "liquid_reply_not_json", logging.WARNING, model=self.model, replyChars=len(text))
+            return None
+        return got

@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from contracts.research import ResearchStatus
 from contracts.story import CompetitiveLandscape, StoryTemplate
-from core.logs import in_context
+from core.logs import event, in_context
 
 from .competitors import CompetitorResearch
 from .nimble_fetch import fetcher_name, make_fetcher
@@ -58,6 +58,23 @@ class InvalidInput(Exception):
     """A request body the caller must fix (HTTP 400)."""
 
 
+# Specific types so a stray KeyError / ValueError from a bug is a logged 500, not a quiet 404 / 409.
+class UnknownSession(KeyError):
+    """No research session with this id (HTTP 404)."""
+
+
+class NoStoryline(LookupError):
+    """The session has no storyline yet (HTTP 404)."""
+
+
+class NotReady(ValueError):
+    """The session has no company profile yet (HTTP 409)."""
+
+
+class StorylineFailed(RuntimeError):
+    """Writing the storyline failed; already logged with its traceback (HTTP 500)."""
+
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -66,6 +83,7 @@ def env_int(name: str, default: int, low: int, high: int) -> int:
     try:
         value = int(os.environ.get(name, "").strip() or default)
     except ValueError:
+        event(log, "env_value_invalid", logging.WARNING, name=name, default=default)
         value = default
     return max(low, min(high, value))
 
@@ -119,9 +137,9 @@ class StoryService:
     def start_competitors(self, sid: str, force: bool = False) -> dict:
         state = self.research_store.load(sid)
         if state is None:
-            raise KeyError(sid)
+            raise UnknownSession(sid)
         if state.profile is None:
-            raise ValueError("research session {} has no company profile yet; competitors start after it".format(sid))
+            raise NotReady("research session {} has no company profile yet; competitors start after it".format(sid))
         with self.lock:
             job = self.jobs.get(sid)
             if job is not None and job.is_alive():
@@ -139,19 +157,23 @@ class StoryService:
     def _run_competitors(self, sid: str):
         state = self.research_store.load(sid)
         if state is None:
+            event(log, "competitors_session_missing", logging.WARNING, sessionId=sid)
             return
         try:
             fetcher = self.fetcher_factory()
-        except Exception as e:
+            llm = JsonLlm(self.llm_factory(), self.settings.model)
+            job = CompetitorResearch(state, self.research_store, self.store, fetcher, llm, self.settings.watch_file,
+                                     self.max_competitors, self.pages_per_competitor,
+                                     stopped=lambda: self._stopped(sid), parallel=self.settings.research_parallel)
+        except Exception as e:  # e.g. RESEARCH_FETCHER=nimble without NIMBLE_API_KEY: show it, and log the cause
+            log.exception("competitor research %s could not start", sid)
+            message = "{}: {}".format(type(e).__name__, str(e)[:300])
             landscape = CompetitiveLandscape(session_id=sid, company=state.profile.name if state.profile else "",
-                                             status="error", error=str(e)[:300], updated_at=_now())
+                                             status="error", error=message, updated_at=_now())
             self.store.save_landscape(landscape)
-            self.research_store.append_event(sid, "competitors", {"status": "error", "message": str(e)[:300]})
+            self.research_store.append_event(sid, "competitors", {"status": "error", "message": message})
             return
-        llm = JsonLlm(self.llm_factory(), self.settings.model)
-        CompetitorResearch(state, self.research_store, self.store, fetcher, llm, self.settings.watch_file,
-                           self.max_competitors, self.pages_per_competitor, stopped=lambda: self._stopped(sid),
-                           parallel=self.settings.research_parallel).run()
+        job.run()  # run() records its own failures on the landscape
 
     def watch_once(self):
         """Starts competitor research for sessions (created while this worker runs) that now have a profile."""
@@ -163,7 +185,7 @@ class StoryService:
                 continue
             try:
                 self.start_competitors(st.session_id)
-            except (KeyError, ValueError):
+            except (UnknownSession, NotReady):  # deleted, or the profile was reset since the check above
                 continue
 
     def run_watcher(self, stop: threading.Event):
@@ -180,7 +202,7 @@ class StoryService:
 
     def competitors_view(self, sid: str) -> dict:
         if self.research_store.load(sid) is None:
-            raise KeyError(sid)
+            raise UnknownSession(sid)
         landscape = self.store.landscape(sid)
         running = sid in self.jobs and self.jobs[sid].is_alive()
         if landscape is None:
@@ -228,7 +250,7 @@ class StoryService:
         """Added to GET /research/{id}: competitor summary and the latest storyline."""
         try:
             competitors = self.competitors_view(sid)
-        except KeyError:
+        except UnknownSession:
             return {}
         plan = self.store.storyline(sid)
         return {"competitors": competitors, "storyline": plan.model_dump(mode="json") if plan else None}
@@ -241,16 +263,16 @@ class StoryService:
     # --- storyline --------------------------------------------------------------------------------------------------
     def storyline_view(self, sid: str) -> dict:
         if self.research_store.load(sid) is None:
-            raise KeyError(sid)
+            raise UnknownSession(sid)
         plan = self.store.storyline(sid)
         if plan is None:
-            raise LookupError("no storyline yet for {}; POST /research/{}/storyline".format(sid, sid))
+            raise NoStoryline("no storyline yet for {}; POST /research/{}/storyline".format(sid, sid))
         return {"storyline": plan.model_dump(mode="json")}
 
     def write(self, sid: str, body: dict) -> dict:
         state = self.research_store.load(sid)
         if state is None:
-            raise KeyError(sid)
+            raise UnknownSession(sid)
         with self.lock:
             story_lock = self.story_locks.setdefault(sid, threading.Lock())
         if not story_lock.acquire(blocking=False):
@@ -259,7 +281,7 @@ class StoryService:
             latest = self.store.storyline(sid)
             if "edits" in body:
                 if latest is None:
-                    raise LookupError("no storyline to edit yet")
+                    raise NoStoryline("no storyline to edit yet")
                 try:
                     plan = edit_storyline(latest, body["edits"])
                 except ValueError as e:
@@ -290,15 +312,15 @@ class StoryService:
                 time.sleep(0.25)  # "create video now" during the first round: wait for the first profile
                 state = self.research_store.load(sid) or state
             if state.profile is None:
-                raise ValueError("research session {} has no company profile yet (status {}); wait for its first "
+                raise NotReady("research session {} has no company profile yet (status {}); wait for its first "
                                  "round".format(sid, state.status.value))
             self.research_store.append_event(sid, "storyline", {"stage": "writing",
                                                                 "message": "writing the storyline"})
             if self.auto and sid not in self.jobs and self.store.landscape(sid) is None and not state.is_test:
                 try:  # the watcher has not picked the session up yet: start now so the storyline can use it
                     self.start_competitors(sid)
-                except (KeyError, ValueError):
-                    pass
+                except (UnknownSession, NotReady) as e:  # the storyline is still written, without competitors
+                    event(log, "competitors_not_started", logging.INFO, reason=str(e)[:200])
             while time.time() < deadline:  # a running competitor pass adds differentiators and names to avoid
                 job = self.jobs.get(sid)
                 if job is None or not job.is_alive():
@@ -314,7 +336,7 @@ class StoryService:
                 self.research_store.append_event(sid, "storyline", {"stage": "error",
                                                                     "message": "could not write the storyline"})
                 log.exception("storyline for %s failed", sid)
-                raise RuntimeError("could not write the storyline: {}".format(type(e).__name__))
+                raise StorylineFailed("could not write the storyline: {}".format(type(e).__name__))
             self.store.save_storyline(plan)
             self.research_store.append_event(sid, "storyline", {"storyline": plan.model_dump(mode="json"),
                                                                 "reason": "write"})
@@ -378,15 +400,18 @@ class StoryService:
             if method == "GET":
                 return 200, self.storyline_view(sid)
             return 200, self.write(sid, body or {})
-        except KeyError:
+        except UnknownSession:
             return 404, {"error": "no research session {}".format(sid)}
-        except LookupError as e:
+        except NoStoryline as e:
             return 404, {"error": str(e)}
         except BlockingIOError as e:
             return 429, {"error": str(e)}
         except InvalidInput as e:
             return 400, {"error": str(e)}
-        except ValueError as e:
+        except NotReady as e:
             return 409, {"error": str(e)}
-        except RuntimeError as e:
+        except StorylineFailed as e:
             return 500, {"error": str(e)}
+        except Exception as e:  # a bug: log the traceback and still answer, so the web app shows an error
+            log.exception("%s %s failed", method, path)
+            return 500, {"error": "internal error in the agent: {}".format(type(e).__name__)}

@@ -73,13 +73,17 @@ export async function fetchJob(jobId: string): Promise<JobSnapshot | null> {
 
 export async function fetchActiveJobs(): Promise<JobSnapshot[]> {
   const response = await fetch("/api/jobs?active=1", { headers: userHeaders(), cache: "no-store" });
-  if (!response.ok) return [];
+  if (!response.ok) {
+    console.warn(`[jobs] listing active jobs returned HTTP ${response.status}`);
+    return [];
+  }
   const body = await response.json() as { jobs?: JobSnapshot[] };
   return Array.isArray(body.jobs) ? body.jobs : [];
 }
 
 export function cancelJob(jobId: string) {
-  return fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", headers: userHeaders(), keepalive: true }).catch(() => undefined);
+  return fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", headers: userHeaders(), keepalive: true })
+    .catch((caughtError: unknown) => console.warn(`[jobs] could not cancel job ${jobId}`, caughtError));
 }
 
 export async function resumeJob(jobId: string) {

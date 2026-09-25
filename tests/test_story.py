@@ -1,6 +1,7 @@
 """Competitor research (Nimble), the storyline tool and first-prompt company detection, offline: a fake Nimble
 extractor + DNS resolver, robots.txt behind httpx.MockTransport and a scripted fake Liquid."""
 import json
+import logging
 import socket
 import time
 import urllib.error
@@ -271,6 +272,36 @@ def test_competitors_need_a_profile_and_a_session(settings):
     with pytest.raises(KeyError):
         service.start_competitors("research_missing")
     assert service.competitors_view(st.session_id)["status"] == "off"
+
+
+def test_bugs_in_routes_are_500s_not_quiet_404s(settings, monkeypatch):
+    service, manager, _ = service_for(settings)
+    st = acme_state()
+    manager.store.save(st)
+    path = "/research/{}/competitors".format(st.session_id)
+    assert service.handle("GET", "/research/research_missing/competitors", None)[0] == 404
+
+    def broken(sid):
+        raise KeyError("a bug, not a missing session")
+    monkeypatch.setattr(service.store, "landscape", broken)
+    status, body = service.handle("GET", path, None)
+    assert status == 500 and "KeyError" in body["error"]
+
+
+def test_competitor_fetcher_failure_is_recorded(settings, caplog):
+    service, manager, _ = service_for(settings)
+    st = acme_state()
+    manager.store.save(st)
+
+    def no_key():
+        raise FetchError("RESEARCH_FETCHER=nimble but NIMBLE_API_KEY is not set in .env")
+    service.fetcher_factory = no_key
+    with caplog.at_level(logging.ERROR, logger="agent"):
+        service.start_competitors(st.session_id)
+        service.jobs[st.session_id].join(timeout=5)
+    view = service.competitors_view(st.session_id)
+    assert view["status"] == "error" and "NIMBLE_API_KEY" in view["error"]
+    assert any(r.exc_info and "could not start" in r.getMessage() for r in caplog.records)
 
 
 def test_watcher_starts_competitors_for_new_sessions_only(settings):

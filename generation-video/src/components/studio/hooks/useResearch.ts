@@ -124,7 +124,14 @@ export function useResearch(target: ResearchTarget | null) {
       const decoder = new TextDecoder();
       const lines = createLineSplitter();
       const handle = (line: string) => {
-        const event = parseStreamLine(line) ?? (() => { try { return JSON.parse(line) as unknown; } catch { return null; } })();
+        const event = parseStreamLine(line) ?? (() => {
+          try {
+            return JSON.parse(line) as unknown;
+          } catch (caughtError) {
+            console.warn("[research] skipped a malformed stream line", line.slice(0, 120), caughtError);
+            return null;
+          }
+        })();
         if (event) mutate(id, (current) => applyResearchEvent(current, event));
       };
       while (true) {
@@ -158,7 +165,12 @@ export function useResearch(target: ResearchTarget | null) {
         if (!current || !isResearchFollowing(current)) break;
         await sleep(failures ? 1500 * failures : 600, signal);
       }
-      if (!signal.aborted) await loadSnapshot().catch(() => undefined);
+      // Final refresh; the session shown so far stays usable if it fails.
+      if (!signal.aborted) {
+        await loadSnapshot().catch((caughtError: unknown) => {
+          if (!signal.aborted) console.error("[research] could not load the final research snapshot", caughtError);
+        });
+      }
     })();
     return () => controller.abort();
   }, [targetKey, restartKey]);

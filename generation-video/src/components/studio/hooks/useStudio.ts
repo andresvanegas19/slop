@@ -1365,7 +1365,10 @@ export function useStudio() {
     setNotice(null);
     if (suggestion.preset === "company") {
       void researchCompanyFor("company", suggestion.prompt, false)
-        .catch(() => "")
+        .catch((caughtError: unknown) => {
+          console.error("[research] company detection failed; researching without a company name", caughtError);
+          return "";
+        })
         .then((company) => beginResearch(suggestion.prompt, company ?? "", presetLength));
       return;
     }
@@ -1430,7 +1433,10 @@ export function useStudio() {
     void (async () => {
       // Jobs this browser started (localStorage) plus any active server job for this user it doesn't know about.
       const stored = loadStoredJobs();
-      const active = await fetchActiveJobs().catch(() => []);
+      const active = await fetchActiveJobs().catch((caughtError: unknown) => {
+        console.warn("[jobs] could not list active jobs; restoring only this browser's jobs", caughtError);
+        return [];
+      });
       for (const job of active) {
         if (stored.some((entry) => entry.jobId === job.id)) continue;
         const kind: HistoryKind | null = job.kind === "clip" ? "clip" : job.kind === "preset" ? "ad" : job.kind === "storyboard" ? "storyboard" : job.kind === "rawtree" ? "rawtree" : null;
@@ -1439,7 +1445,10 @@ export function useStudio() {
         saveStoredJob(job.status === "interrupted" ? { ...entry, interrupted: true } : entry);
         stored.push(job.status === "interrupted" ? { ...entry, interrupted: true } : entry);
       }
-      const checked = await Promise.all(stored.map(async (entry) => ({ entry, snapshot: await fetchJob(entry.jobId).catch(() => undefined) })));
+      const checked = await Promise.all(stored.map(async (entry) => ({ entry, snapshot: await fetchJob(entry.jobId).catch((caughtError: unknown) => {
+        console.warn(`[jobs] could not check job ${entry.jobId}; will retry on the next load`, caughtError);
+        return undefined;
+      }) })));
       const live: StoredJob[] = [];
       const finished: StoredJob[] = [];
       for (const { entry, snapshot } of checked) {
