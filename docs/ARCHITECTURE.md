@@ -98,8 +98,9 @@ A, B and C run on different machines, so storyboards travel through RawTree rath
 
   ```sql
   SELECT * FROM slop_human_build
-  WHERE is_test = false
-    AND storyboard_id NOT IN (SELECT storyboard_id FROM slop_human_media_events WHERE status = 'done')
+  WHERE toString(is_test) = 'false'
+    AND toString(storyboard_id) NOT IN (
+      SELECT toString(storyboard_id) FROM slop_human_media_events WHERE toString(status) = 'done')
   ORDER BY created_at
   ```
 

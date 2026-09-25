@@ -34,6 +34,7 @@ What each service actually did when tested on 2026-09-25, as input to [PRD.md](.
 |---|---|---|
 | **One database shared by all hackathon teams** | 34 foreign tables in `GET /v1/tables` (`aura_*`, `beluga_*`, `horizon_*` …) | Prefix every table `slop_human` (DECISIONS D5). Store only public data; anyone at the event can read it |
 | Tables are created by the first insert; no schema up front | `POST /v1/tables/{name}` creates it; every column type is `Dynamic`. Explicit `POST /v1/tables` returns 403 "requires admin permission" with our key | The schema lives in `contracts/`, not in the DB. An empty table has no columns |
+| **`IN` / `NOT IN` / `=` on a column fail unless you wrap it in `toString()`** | `run_id NOT IN (...)` → "Illegal type Dynamic of argument of function notIn" | Every filter: `toString(col) IN (...)`, `toString(col) = '...'`. Applies to all our tables |
 | Nested objects become dotted columns | `section_hashes: {pricing: …}` → column `section_hashes.pricing` | Query with backticks: `` `section_hashes.pricing` `` |
 | `fetched_at` stored as a timestamp with nanoseconds | Returned as `2026-09-25 19:46:50.861059000` | Cursor on `toString(fetched_at)` |
 | A new table is queryable only after ~3 s | Immediate query → `UNKNOWN_IDENTIFIER`; worked 3 s later | Retry reads on a new table |
