@@ -4,6 +4,7 @@ import { streamable } from "@/lib/ndjson";
 import { emitStage } from "@/lib/progress";
 import { logException, logInfo } from "@/lib/runtime-log";
 import { STORY_DURATIONS, StoryError, isStorySetId, renderStories, type StoryDuration } from "@/lib/stories";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 
@@ -66,4 +67,4 @@ async function handlePost(request: Request, { params }: { params: Promise<{ setI
   }
 }
 
-export const POST = streamable(handlePost);
+export const POST = jobable("stories-render", streamable(handlePost));

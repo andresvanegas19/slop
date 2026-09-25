@@ -8,6 +8,7 @@ import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent as Rea
 import type { AppendResult, AskResult, BusyState, CommandResult, ContinueAction, FrameGrab, HistoryItem, HistoryKind, LiveProgress, MediaType, PendingOp, Project, ProjectFrame, RangeDrag, RenderResult, ThreadEntry, TimeWindow } from "../types";
 import { FRAME_STEP, MAX_UPLOAD_BYTES, RANGE_MIN_SEC, clampRange, captureVideoThumb, defaultRange, errorMessage, formatBytes, formatWindow, frameIndexAt, historyItemFromProject, isAbortError, isProject, isTimeWindow, isVideoFile, issueMessages, kindLabel, mergeThread, nowIso, memoryChips, ragLabels, readJson, threadFromProject } from "../utils";
 import { setHistoryOpen, updateHistory, useHistory, useHistoryOpen } from "./historyStore";
+import { useStories } from "./useStories";
 import { loadContinueMode, loadLocalThread, saveContinueMode, saveLocalThread, userHeaders } from "./storage";
 import { useAbortSlot } from "./useAbortSlot";
 import { emptyLive, reduceLive } from "../live";
@@ -74,6 +75,25 @@ export function useStudio() {
   const threadRef = useRef<HTMLDivElement>(null);
   const [editedNote, setEditedNote] = useState<string | null>(null);
   const [presetLength, setPresetLength] = useState(10);
+  // "Stories" (+ menu): N different 3-beat stories → pick one → one continuous video (see useStories / StoryPicker).
+  const [storyCount, setStoryCount] = useState(3);
+  const [storyLength, setStoryLength] = useState(5);
+  const stories = useStories({
+    onProjects: (projects) => {
+      const items: HistoryItem[] = projects.map((created) => ({
+        projectId: created.id,
+        title: created.title || "Story",
+        videoUrl: created.videoUrl,
+        thumbUrl: created.frames[0]?.imageUrl ?? "",
+        durationSeconds: created.durationSeconds,
+        createdAt: created.createdAt || new Date().toISOString(),
+        kind: "clip",
+        generatedSeconds: created.durationSeconds,
+      }));
+      updateHistory((existing) => [...items, ...existing.filter((item) => !items.some((added) => added.projectId === item.projectId))]);
+      if (items[0]) void openProject(items[0]);
+    },
+  });
   const videoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const isScrubbingRef = useRef(false);
@@ -192,7 +212,7 @@ export function useStudio() {
     ? Boolean(project) && !isEditing && Boolean(prompt.trim())
     : attachmentReady
     ? !isGenerating && !isStartingResearch
-    : !isGenerating && !isStartingResearch && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "rawtree" ? true : Boolean(prompt.trim()));
+    : !isGenerating && !isStartingResearch && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "rawtree" ? true : mediaType === "stories" ? Boolean(prompt.trim()) && !stories.isBusy : Boolean(prompt.trim()));
   const latestClip = history.find((item) => item.kind === "clip");
   // Length of a freshly generated quick clip (edits/cuts change durationSeconds, so prefer the original length).
   const clipSeconds = latestClip ? latestClip.generatedSeconds ?? latestClip.durationSeconds : null;
@@ -347,6 +367,13 @@ export function useStudio() {
   async function generateMedia(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) return;
+    if (mediaType === "stories") {
+      const storyPrompt = prompt.trim();
+      setError(null);
+      setPrompt("");
+      await stories.start(storyPrompt, storyCount, storyLength);
+      return;
+    }
 
     const kind: HistoryKind = mediaType ?? "clip";
     const promptText = prompt.trim();
@@ -1285,6 +1312,7 @@ export function useStudio() {
     research, createVideoFromResearch, dismissResearch: () => setActiveResearch(null), error, notice, narrationMessages,
     mediaType, isMediaMenuOpen, setIsMediaMenuOpen, selectMediaType, storyboardFileName, storyboardError, selectStoryboard,
     presetLength, setPresetLength, clipCopy, canSubmit, submitComposer, promptInputRef,
+    stories, storyCount, setStoryCount, storyLength, setStoryLength,
     cancelGeneration: generationAbort.abort, cancelEdit: editAbort.abort,
     // history
     history, isHistoryOpen, setHistoryOpen, openProject,

@@ -5,12 +5,13 @@ import { createProject, titleFromPrompt } from "@/lib/projects";
 import { schedulePublish } from "@/lib/video-store";
 import { logException, logInfo } from "@/lib/runtime-log";
 import { loadUpload, UploadError } from "@/lib/uploads";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /** POST `{ uploadId, prompt? }` → `{ project }`: a new `kind: "clip"` project whose frame 0 is the uploaded video. */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const body = await request.json().catch(() => ({})) as { uploadId?: unknown; prompt?: unknown };
     if (typeof body.uploadId !== "string" || !body.uploadId) {
@@ -36,3 +37,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = jobable("upload", handlePost);

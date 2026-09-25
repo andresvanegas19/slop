@@ -4,12 +4,13 @@ import { loadProject, ProjectNotFoundError, saveProject, withProjectLock } from 
 import { logException, logInfo } from "@/lib/runtime-log";
 import { removeFrame, TimelineError } from "@/lib/timeline-ops";
 import { schedulePublish } from "@/lib/video-store";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /** DELETE → `{ project }`: removes that frame's segment (shot) and reassembles the video. */
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string; index: string }> }) {
+async function handleDelete(_request: Request, { params }: { params: Promise<{ id: string; index: string }> }) {
   const { id, index: rawIndex } = await params;
   const index = Number(rawIndex);
   if (!/^\d+$/.test(rawIndex) || !Number.isSafeInteger(index)) {
@@ -31,3 +32,5 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const DELETE = jobable("remove-frame", handleDelete);

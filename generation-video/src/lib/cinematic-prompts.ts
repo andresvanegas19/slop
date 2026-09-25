@@ -1,3 +1,4 @@
+import { shotPlaybook } from "@/lib/content-playbook";
 import { createChatCompletion, openRouterModel } from "@/lib/openrouter";
 import { emitEvent, isStreaming } from "@/lib/progress";
 import { copiesGuidance, dropUnrequestedStyle, styleTermsIn } from "@/lib/prompt-enhance";
@@ -36,7 +37,8 @@ export type CameraMove = (typeof CAMERA_MOVES)[number];
 
 const CAMERA_PATTERNS: [RegExp, CameraMove][] = [
   [/\bover[- ]the[- ]shoulder\b|\bOTS\b/i, "over-the-shoulder"],
-  [/\bwalking\b|\bfollow(?:s|ing)?\b|\btracking\b/i, "walking follow"],
+  // "follows her hands" is not a walking follow: require walking (or a tracking shot) for this move.
+  [/\bwalking follow\b|\bwalk(?:s|ing)?\b[^.]*\bfollow|\bfollow(?:s|ing)?\b[^.]*\bwalk|\btracking shot\b/i, "walking follow"],
   [/\b(?:dolly|push(?:es|ing)?|mov(?:es|ing)?|step(?:s|ping)?|lean(?:s|ing)?)\s*(?:slowly\s*)?(?:in|forward|closer)\b|\bpush[- ]in\b|\bslow push\b/i, "slow push in by hand"],
   [/\breframe[sd]?\b|\bwhip\b|\bswings?\b/i, "quick reframe"],
   [/\bpan(?:s|ning)?\b|\bsweeps?\b/i, "handheld pan"],
@@ -147,10 +149,10 @@ function withoutCameraSentences(text: string) {
 
 export function beatFor(index: number, count: number, label?: string) {
   const role = label ? `${label}: ` : "";
-  if (count === 1) return `${role}a single moment: a hook that resolves into a small payoff`;
-  if (index === 0) return `${role}hook: open on the world and its people, make the viewer curious`;
-  if (index === count - 1) return `${role}payoff: a warm, satisfying closing image that leaves a feeling`;
-  return `${role}build: a concrete human action that moves the story forward`;
+  if (count === 1) return `${role}a single moment: a scroll-stopping first second that raises a question and resolves into a small payoff`;
+  if (index === 0) return `${role}hook: a scroll-stopping first second in the world of its people that makes the viewer curious`;
+  if (index === count - 1) return `${role}payoff: the question is answered in a warm, satisfying closing image where the feeling has changed`;
+  return `${role}build: a concrete human action with a small conflict that turns the moment and moves the story forward`;
 }
 
 function defaultCamera(index: number, count: number): CameraMove {
@@ -314,6 +316,8 @@ function shotSystem(count: number, guidance: string, keepStyle?: string) {
       : "Real footage only: never illustration, cartoon, vector, isometric, 3D render or painting, never posed studio shots.",
     "Never put text, letters, signs, screens with words, or logos in the picture. Describe what you want to see, not what to avoid.",
     "No markdown, no quotes, no explanations.",
+    "",
+    shotPlaybook(),
   ].join("\n") + guidanceSection(guidance);
 }
 

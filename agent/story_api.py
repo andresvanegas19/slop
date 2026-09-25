@@ -6,6 +6,7 @@ HTTP (127.0.0.1 only, served by agent/worker.py next to the research routes):
   POST /research/{id}/competitors {force?}           -> starts competitor research now (normally automatic)
   GET  /research/{id}/storyline                      -> latest StoryPlan
   POST /research/{id}/storyline {duration_sec, templates, template?, prompt?, wait_s?}  -> writes a new StoryPlan
+       (waits up to wait_s for the first profile / a running competitor pass; Liquid gets RESEARCH_STORY_TIMEOUT_S)
   POST /research/{id}/storyline {edits: {...}}       -> the user's edits as a new version (competitor names rejected)
 
 Competitor research starts by itself once a session has its first CompanyProfile (sessions created while this
@@ -52,6 +53,10 @@ Request: \"\"\"{prompt}\"\"\"
 Reply with only JSON: {{"company_name": "<the company exactly as written in the request, or null>", "likely_domain": "<its main website domain, or null>", "video_goal": "<what the video is for, one sentence in English>"}}"""
 
 
+class InvalidInput(Exception):
+    """A request body the caller must fix (HTTP 400)."""
+
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -95,6 +100,7 @@ class StoryService:
         self.max_competitors = env_int("RESEARCH_MAX_COMPETITORS", 3, 0, 5)
         self.pages_per_competitor = env_int("RESEARCH_COMPETITOR_PAGES", 3, 1, 6)
         self.detect_timeout_s = env_int("RESEARCH_DETECT_TIMEOUT_S", 10, 1, 60)
+        self.story_timeout_s = env_int("RESEARCH_STORY_TIMEOUT_S", 90, 5, 300)
         self.auto = self.max_competitors > 0 if auto is None else auto
         self.started_at = _now()
         self.jobs: Dict[str, threading.Thread] = {}
@@ -150,9 +156,7 @@ class StoryService:
             return
         done = set(self.store.landscape_ids())
         for st in self.research_store.sessions(limit=20):
-            if st.session_id in done or st.session_id in self.jobs or st.is_test or st.profile is None:
-                continue
-            if st.created_at < self.started_at or st.status in (ResearchStatus.stopped, ResearchStatus.error):
+            if st.session_id in done or st.session_id in self.jobs or st.profile is None or not self._eligible(st):
                 continue
             try:
                 self.start_competitors(st.session_id)
@@ -175,18 +179,27 @@ class StoryService:
         if self.research_store.load(sid) is None:
             raise KeyError(sid)
         landscape = self.store.landscape(sid)
+        running = sid in self.jobs and self.jobs[sid].is_alive()
         if landscape is None:
-            return {"session_id": sid, "status": "waiting" if self.auto else "off",
-                    "message": "starts after the first research round" if self.auto else
-                    "competitor research is off (RESEARCH_MAX_COMPETITORS=0)",
-                    "competitors": [], "differentiators": [], "competitor_themes": [], "avoid_terms": []}
+            # "waiting" only when a run will really start (the web app keeps following the session meanwhile)
+            state = self.research_store.load(sid)
+            waiting = (sid not in self.jobs and state is not None and self._eligible(state) and
+                       (state.profile is not None or state.status != ResearchStatus.done))
+            status = "running" if running else "waiting" if waiting else "off" if not self.auto else "none"
+            message = {"running": "finding competitors", "waiting": "starts after the first research round",
+                       "off": "competitor research is off (RESEARCH_MAX_COMPETITORS=0)",
+                       "none": "no competitor research for this session"}[status]
+            return {"session_id": sid, "status": status, "message": message, "competitors": [],
+                    "differentiators": [], "competitor_themes": [], "avoid_terms": [], "running": running}
         out = landscape.model_dump(mode="json")
+        if out["status"] == "running" and not running:  # the worker restarted mid-run
+            out["status"], out["message"] = "interrupted", "interrupted by a worker restart; POST to run it again"
         for c in out["competitors"]:  # quotes and page lists stay in the agent; the app gets claims
             c["id"] = c.get("competitor_id")
             c["claims"] = [f["claim"] for f in c.pop("findings", [])][:8]
             c["pages"] = len(c.get("pages", []))
         out["differentiators"] = [d["text"] for d in out["differentiators"]]
-        out["running"] = sid in self.jobs and self.jobs[sid].is_alive()
+        out["running"] = running
         return out
 
     def pending(self, sid: str) -> bool:
@@ -198,12 +211,15 @@ class StoryService:
         lock = self.story_locks.get(sid)
         if lock is not None and lock.locked():
             return True
-        if not self.auto or sid in self.jobs:
+        if sid in self.jobs:
             return False
         st = self.research_store.load(sid)
-        return bool(st and st.profile is not None and not st.is_test and st.created_at >= self.started_at and
-                    st.status not in (ResearchStatus.stopped, ResearchStatus.error) and
-                    self.store.landscape(sid) is None)
+        return bool(st and st.profile is not None and self._eligible(st) and self.store.landscape(sid) is None)
+
+    def _eligible(self, st) -> bool:
+        """Sessions the watcher researches competitors for once they have a profile."""
+        return (self.auto and not st.is_test and st.created_at >= self.started_at and
+                st.status not in (ResearchStatus.stopped, ResearchStatus.error))
 
     def extras(self, sid: str) -> dict:
         """Added to GET /research/{id}: competitor summary and the latest storyline."""
@@ -241,34 +257,45 @@ class StoryService:
             if "edits" in body:
                 if latest is None:
                     raise LookupError("no storyline to edit yet")
-                plan = edit_storyline(latest, body["edits"])
+                try:
+                    plan = edit_storyline(latest, body["edits"])
+                except ValueError as e:
+                    raise InvalidInput(str(e))
                 self.store.save_storyline(plan)
                 self.research_store.append_event(sid, "storyline", {"storyline": plan.model_dump(mode="json"),
                                                                     "reason": "edit"})
                 return {"storyline": plan.model_dump(mode="json")}
-            if state.profile is None:
-                raise ValueError("research session {} has no company profile yet (status {}); wait for its first "
-                                 "round".format(sid, state.status.value))
             duration = body.get("duration_sec")
             if not isinstance(duration, int) or isinstance(duration, bool) or not 3 <= duration <= 120:
-                raise TypeError("duration_sec must be an integer from 3 to 120")
+                raise InvalidInput("duration_sec must be an integer from 3 to 120")
             try:
                 templates = [StoryTemplate.model_validate(t) for t in (body.get("templates") or [])][:6]
             except ValidationError as e:
-                raise TypeError("templates are invalid: {}".format(str(e)[:300]))
+                raise InvalidInput("templates are invalid: {}".format(str(e)[:300]))
             hint = body.get("template")
             if hint is not None and (not isinstance(hint, str) or (templates and hint not in {t.id for t in
                                                                                               templates})):
-                raise TypeError("template must be one of the ids in templates")
+                raise InvalidInput("template must be one of the ids in templates")
             prompt = body.get("prompt")
             if prompt is not None and (not isinstance(prompt, str) or len(prompt) > MAX_PROMPT_CHARS):
-                raise TypeError("prompt must be a string up to 32,000 characters")
+                raise InvalidInput("prompt must be a string up to 32,000 characters")
             wait_s = body.get("wait_s", 30)
             wait_s = max(0, min(90, wait_s)) if isinstance(wait_s, (int, float)) and not isinstance(wait_s, bool) \
                 else 30
             deadline = time.time() + wait_s
+            while state.profile is None and time.time() < deadline and not self.manager.finished(sid):
+                time.sleep(0.25)  # "create video now" during the first round: wait for the first profile
+                state = self.research_store.load(sid) or state
+            if state.profile is None:
+                raise ValueError("research session {} has no company profile yet (status {}); wait for its first "
+                                 "round".format(sid, state.status.value))
             self.research_store.append_event(sid, "storyline", {"stage": "writing",
                                                                 "message": "writing the storyline"})
+            if self.auto and sid not in self.jobs and self.store.landscape(sid) is None and not state.is_test:
+                try:  # the watcher has not picked the session up yet: start now so the storyline can use it
+                    self.start_competitors(sid)
+                except (KeyError, ValueError):
+                    pass
             while time.time() < deadline:  # a running competitor pass adds differentiators and names to avoid
                 job = self.jobs.get(sid)
                 if job is None or not job.is_alive():
@@ -276,7 +303,7 @@ class StoryService:
                 job.join(timeout=min(1.0, max(0.05, deadline - time.time())))
             state = self.research_store.load(sid) or state
             landscape = self.store.landscape(sid)
-            llm = JsonLlm(self.llm_factory(), self.settings.model)
+            llm = JsonLlm(self.llm_factory(), self.settings.model, timeout_s=self.story_timeout_s)
             plan = write_storyline(state, landscape, templates, duration, llm, template_hint=hint, prompt=prompt,
                                    version=(latest.version + 1) if latest else 1)
             self.store.save_storyline(plan)
@@ -317,6 +344,10 @@ class StoryService:
         return result
 
     # --- HTTP -------------------------------------------------------------------------------------------------------
+    @staticmethod
+    def handles(path: str) -> bool:
+        return path == "/research/detect" or PATH.match(path) is not None
+
     def handle(self, method: str, path: str, body: Optional[dict]) -> Optional[Tuple[int, dict]]:
         """(status, body) for the routes above, or None when the path is not one of them."""
         if path == "/research/detect":
@@ -344,7 +375,7 @@ class StoryService:
             return 404, {"error": str(e)}
         except BlockingIOError as e:
             return 429, {"error": str(e)}
-        except TypeError as e:
+        except InvalidInput as e:
             return 400, {"error": str(e)}
         except ValueError as e:
             return 409, {"error": str(e)}

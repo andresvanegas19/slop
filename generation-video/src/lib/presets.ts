@@ -1,9 +1,11 @@
+import { planContent, scriptPlaybook, type FunnelStage } from "@/lib/content-playbook";
 import { createChatCompletion, openRouterModel } from "@/lib/openrouter";
 import { retrieveMemory, type MemorySource } from "@/lib/memory";
 import { titleFromPrompt } from "@/lib/projects";
 import { logException, logInfo } from "@/lib/runtime-log";
+import { mentionsAny, storylineBrief, storylineSceneText, type Storyline } from "@/lib/storyline";
 
-export const PRESET_IDS = ["ad", "company"] as const;
+export const PRESET_IDS = ["ad", "company", "competitive"] as const;
 export type PresetId = (typeof PRESET_IDS)[number];
 export const PRESET_DURATIONS = [5, 10, 15, 30] as const;
 export type PresetDuration = (typeof PRESET_DURATIONS)[number];
@@ -60,6 +62,8 @@ type PresetDefinition = {
   promptPrefix: string;
   ragTags: string[];
   ragQuery: string;
+  /** Funnel stage used when the brief doesn't ask for one (see content-playbook.ts). */
+  funnelStage: FunnelStage;
   roles: Record<PresetDuration, Role[]>;
 };
 
@@ -68,7 +72,7 @@ type PresetDefinition = {
 const ad = {
   hook: {
     type: "hook",
-    goal: "HOOK: grab attention instantly with a bold, surprising image and a punchy line about the viewer's problem or desire.",
+    goal: "HOOK (first 0.6 to 2 seconds): stop the scroll with a bold, surprising image and a punchy line about the viewer's problem or desire that opens a question the ad answers.",
     fallback: (s: string) => ({
       headline: `Meet ${s}`,
       narration: `Meet ${s}.`,
@@ -125,7 +129,7 @@ const ad = {
 const company = {
   who: {
     type: "who",
-    goal: "WHO WE ARE: introduce the company with its real people or place, warm and human.",
+    goal: "OPENING HOOK (first 0.6 to 2 seconds): open on something the viewer needs or is curious about, shown through the company's real people or place, warm and human; the company is the bridge, not the topic.",
     fallback: (s: string) => ({
       headline: `Meet ${s}`,
       narration: `We are ${s}.`,
@@ -188,6 +192,64 @@ const company = {
   },
 } satisfies Record<string, Role>;
 
+/** Positioning ad from company + competitor research: it differentiates without ever naming or showing a competitor. */
+const competitive = {
+  problem: {
+    type: "problem",
+    goal: "HOOK (first 0.6 to 2 seconds): show the frustration buyers in this category live with today, as a real moment; never name, show or hint at a specific other company.",
+    fallback: () => ({
+      headline: "There's a better way",
+      narration: "You deserve better than the usual.",
+      visual: "a frustrated person sighing at an everyday task in a dim, cluttered room, cool flat light",
+    }),
+  },
+  approach: {
+    type: "approach",
+    goal: "OUR APPROACH: show how this company does it differently, concrete and specific to its real product.",
+    fallback: (s: string) => ({
+      headline: `The ${s} way`,
+      narration: `${s} does it differently.`,
+      visual: `${s} in use in a bright, tidy real-life setting, confident natural light, medium shot`,
+    }),
+  },
+  differentiator: {
+    type: "differentiator",
+    goal: "WHAT ONLY WE DO: show the company's strongest real difference (from the research) as an outcome the viewer feels; no comparisons by name.",
+    fallback: (s: string) => ({
+      headline: "Only here",
+      narration: `Only ${s} gives you this.`,
+      visual: `a delighted customer discovering what makes ${s} different, candid moment, warm window light`,
+    }),
+  },
+  differentiator2: {
+    type: "differentiator",
+    goal: "SECOND DIFFERENCE: another real strength of the company, shown in a different everyday moment.",
+    fallback: () => ({
+      headline: "Made to last",
+      narration: "Built with care, every time.",
+      visual: "a close, calm moment of someone relying on the product during a busy day, soft golden light",
+    }),
+  },
+  proof: {
+    type: "proof",
+    goal: "PROOF: show evidence from the research (customers, craft, results) that makes the difference believable.",
+    fallback: () => ({
+      headline: "Trusted every day",
+      narration: "People notice the difference.",
+      visual: "a macro detail that shows quality and care, glossy highlights, shallow depth of field",
+    }),
+  },
+  cta: {
+    type: "cta",
+    goal: "CALL TO ACTION: invite the viewer to switch or try, with one clear action and no competitor names.",
+    fallback: (s: string) => ({
+      headline: "Make the switch",
+      narration: `Choose ${s} today.`,
+      visual: `${s} centered on a clean, vibrant backdrop with generous empty space around it, confident hero lighting`,
+    }),
+  },
+} satisfies Record<string, Role>;
+
 export const PRESETS: Record<PresetId, PresetDefinition> = {
   ad: {
     label: "New ad",
@@ -196,6 +258,7 @@ export const PRESETS: Record<PresetId, PresetDefinition> = {
       "Handheld smartphone footage of real people using the product in everyday life, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, no text, letters or logos in frame.",
     ragTags: ["ad", "video", "production"],
     ragQuery: "ad hook product benefit call to action pacing narration",
+    funnelStage: "sale",
     roles: {
       5: [ad.hook, ad.cta],
       10: [ad.hook, ad.product, ad.benefit, ad.cta],
@@ -210,6 +273,7 @@ export const PRESETS: Record<PresetId, PresetDefinition> = {
       "Handheld smartphone footage, slight natural sway, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, candid real people, no text, letters or logos in frame.",
     ragTags: ["company", "video", "production"],
     ragQuery: "company brand short who what why call to action authentic people pacing",
+    funnelStage: "connection",
     roles: {
       5: [company.who, company.cta],
       10: [company.who, company.what, company.why, company.cta],
@@ -217,7 +281,38 @@ export const PRESETS: Record<PresetId, PresetDefinition> = {
       30: [company.who, company.what, company.what2, company.why, company.proof, company.people, company.cta],
     },
   },
+  competitive: {
+    label: "Competitive ad",
+    titlePrefix: "Ad",
+    promptPrefix:
+      "Handheld smartphone footage of real people in everyday life, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, no text, letters, logos or other brands' products in frame.",
+    ragTags: ["ad", "competitive", "video", "production"],
+    ragQuery: "competitive positioning differentiation without naming competitors switch proof call to action",
+    funnelStage: "sale",
+    roles: {
+      5: [competitive.problem, competitive.cta],
+      10: [competitive.problem, competitive.approach, competitive.differentiator, competitive.cta],
+      15: [competitive.problem, competitive.approach, competitive.differentiator, competitive.proof, competitive.cta],
+      30: [competitive.problem, competitive.approach, competitive.differentiator, competitive.differentiator2, competitive.proof, competitive.approach, competitive.cta],
+    },
+  },
 };
+
+const TEMPLATE_DESCRIPTIONS: Record<PresetId, string> = {
+  ad: "Product ad: hook, the product, its benefits, one call to action.",
+  company: "Company/brand short: who they are, what they do, why it matters, proof, call to action.",
+  competitive: "Positioning ad: the buyer's problem, the company's approach, what only it does, proof, call to action. Never names competitors.",
+};
+
+/** What a preset renders for one duration, as the storyline tool's template catalog (agent/storyline.py). */
+export function presetTemplates(durationSec: PresetDuration) {
+  return PRESET_IDS.map((id) => ({
+    id,
+    label: PRESETS[id].label,
+    description: TEMPLATE_DESCRIPTIONS[id],
+    roles: PRESETS[id].roles[durationSec].map((role) => ({ type: role.type, goal: role.goal })),
+  }));
+}
 
 export function isPresetId(value: unknown): value is PresetId {
   return typeof value === "string" && (PRESET_IDS as readonly string[]).includes(value);
@@ -363,7 +458,7 @@ export function subjectFromPrompt(prompt: string): string {
 
 // ---------- LLM ----------
 
-function systemPrompt(definition: PresetDefinition, roles: Role[], durations: number[], guidance: string) {
+function systemPrompt(definition: PresetDefinition, roles: Role[], durations: number[], guidance: string, playbook: string) {
   const sceneLines = roles.map((role, index) => {
     const seconds = durations[index] / 1000;
     return `Scene ${index + 1} (${seconds}s): ${role.goal} NARRATION at most ${narrationWordBudget(durations[index])} words.`;
@@ -371,16 +466,20 @@ function systemPrompt(definition: PresetDefinition, roles: Role[], durations: nu
   return [
     `You write the script for a ${roles.length}-scene ${definition.label.toLowerCase()} video (${durations.reduce((a, b) => a + b, 0) / 1000} seconds).`,
     ...sceneLines,
-    "For EVERY scene write exactly three lines:",
+    "For EVERY scene write exactly four lines:",
+    "SHIFT: the value this scene turns, as 'from -> to' (planning only, never shown)",
     "HEADLINE: on-screen text, at most 6 words",
     "NARRATION: one short spoken sentence, within the word limit",
     "VISUAL: one candid real moment as if filmed on a phone (people, what they do, the emotion, the place, the natural light). Moments over products. No text, letters, signs or logos in the picture.",
     "Output format (repeat for each scene, nothing else):",
     "SCENE 1",
+    "SHIFT: ...",
     "HEADLINE: ...",
     "NARRATION: ...",
     "VISUAL: ...",
     "Do not add explanations, numbering other than SCENE, markdown, or quotes. Use only facts from the user's brief; do not invent prices, statistics or awards.",
+    "",
+    playbook,
     ...(guidance ? ["", `${guidance}`, "The guidance is general advice: never copy its sentences into the script."] : []),
   ].join("\n");
 }
@@ -424,8 +523,10 @@ export function parseSceneLines(raw: string, count: number): ParsedScene[] {
 async function writeWithLlm(definition: PresetDefinition, roles: Role[], durations: number[], prompt: string, companyContext?: string) {
   const rag = await retrieveMemory(`${prompt} ${definition.ragQuery}`, { k: 4, maxChars: 1_400, tags: definition.ragTags });
   const memorySources = rag.sources;
+  const plan = planContent(prompt, { defaultStage: definition.funnelStage });
+  logInfo("preset_content_plan", { preset: definition.titlePrefix, angle: plan.angle.id, stage: plan.stage, format: plan.format });
   const messages = [
-    { role: "system" as const, content: systemPrompt(definition, roles, durations, rag.text) },
+    { role: "system" as const, content: systemPrompt(definition, roles, durations, rag.text, scriptPlaybook(plan)) },
     {
       role: "user" as const,
       content: `${companyContext ? `Company context (true, current facts; use what fits the brief, never invent numbers):\n${companyContext}\n\n` : ""}Brief: ${prompt}\n\nWrite all ${roles.length} scenes now.`,
@@ -463,6 +564,8 @@ export async function buildPresetStoryboard(input: {
   companyContext?: string;
   /** Optional visual-only direction appended to every image prompt (no digits, no text/logos; see researchVisualHint). */
   visualHint?: string;
+  /** Optional approved research storyline (see storyline.ts): one beat per scene of this preset and duration. */
+  storyline?: Storyline;
 }): Promise<{ storyboard: PresetStoryboard; source: PresetTextSource; memorySources: MemorySource[] }> {
   const definition = PRESETS[input.preset];
   const prompt = input.prompt.replace(/\s+/g, " ").trim();
@@ -470,16 +573,20 @@ export async function buildPresetStoryboard(input: {
   const totalMs = input.durationSec * 1000;
   const durations = planDurationsMs(totalMs, roles.length);
   const subject = subjectFromPrompt(prompt);
-  const { parsed, guidance, memorySources } = await writeWithLlm(definition, roles, durations, prompt, input.companyContext);
+  const storyline = input.storyline?.beats.length === roles.length ? input.storyline : undefined;
+  const avoid = storyline?.avoid_terms ?? [];
+  const context = [input.companyContext, storyline ? storylineBrief(storyline) : ""].filter(Boolean).join("\n\n") || undefined;
+  const { parsed, guidance, memorySources } = await writeWithLlm(definition, roles, durations, prompt, context);
 
   let llmFields = 0;
   let startMs = 0;
   const scenes = roles.map((role, index): PresetScene => {
     const durationMs = durations[index];
-    const fallback = role.fallback(subject);
+    const fallback = storyline ? storylineSceneText(storyline, index) : role.fallback(subject);
     const raw = parsed?.[index] ?? {};
     const pick = (value: string | undefined, fallbackValue: string) => {
-      if (value && !copiesGuidance(value, guidance, prompt)) {
+      // Competitor names never reach the screen, the voice-over or the image model.
+      if (value && !copiesGuidance(value, guidance, prompt) && mentionsAny(value, avoid).length === 0) {
         llmFields += 1;
         return value;
       }
@@ -506,7 +613,7 @@ export async function buildPresetStoryboard(input: {
 
   const total = roles.length * 3;
   const source: PresetTextSource = llmFields === 0 ? "fallback" : llmFields === total ? "llm" : "partial";
-  logInfo("preset_storyboard_built", { preset: input.preset, scenes: scenes.length, source, llmFields, total });
+  logInfo("preset_storyboard_built", { preset: input.preset, scenes: scenes.length, source, llmFields, total, storyline: Boolean(storyline) });
 
   return {
     source,
@@ -514,7 +621,7 @@ export async function buildPresetStoryboard(input: {
     storyboard: {
       storyboard_id: `${input.preset}_${new Date().toISOString().replace(/[:.]/g, "-")}`,
       preset: input.preset,
-      title: `${definition.titlePrefix}: ${titleFromPrompt(stripRequestPrefix(prompt), 6)}`,
+      title: `${definition.titlePrefix}: ${storyline ? titleFromPrompt(storyline.title, 6) : titleFromPrompt(stripRequestPrefix(prompt), 6)}`,
       prompt,
       total_duration_sec: input.durationSec,
       style: { prompt_prefix: definition.promptPrefix, seed: 42, aspect_ratio: input.aspect ?? "16:9", resolution: input.aspect === "9:16" ? "1080x1920" : "1920x1080" },

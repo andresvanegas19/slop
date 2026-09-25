@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import StoryPicker from "./StoryPicker";
 import type { Studio } from "./hooks/useStudio";
 import type { MediaType } from "./types";
 import { CHIP_CLOSE, HistoryRowContent, Segmented, cn, collapse, fade, fadeUp, pop, spring } from "./ui";
@@ -10,6 +11,7 @@ const MEDIA_OPTIONS: { type: MediaType; icon: string; title: string; description
   { type: "rawtree", icon: "◎", title: "Competitor summary", description: "A short summary of the latest competitor moves (RawTree)" },
   { type: "ad", icon: "✦", title: "New ad", description: "A multi-scene ad from your product or offer" },
   { type: "company", icon: "◆", title: "Company short", description: "A short brand video about your company" },
+  { type: "stories", icon: "❖", title: "Stories", description: "3 short stories → pick one → video" },
   { type: "storyboard", icon: "☷", title: "Storyboard file", description: "Render a structured JSON storyboard", advanced: true },
 ];
 
@@ -22,8 +24,8 @@ export default function Composer({ studio }: { studio: Studio }) {
   const dragBlocked = s.isDragOver && s.attachDisabledReason !== null && !(isContinueMode && s.continueAction === "edit" && !s.isStoryboardProject);
   const busy = isContinueMode ? s.isEditing : s.isGenerating || s.isStartingResearch;
 
-  const placeholder = isAutoMode && sourceProject ? `Append “${sourceProject.title}” — press send, or add a note` : isAutoMode && attachment ? "Optional: say what to do with this clip…" : isAtEnd ? "What happens next? e.g. “she waves goodbye”…" : isAutoMode ? "Describe a change, ask a question, or say “make it 3 seconds longer”…" : isAppendMode && sourceProject ? `Append “${sourceProject.title}” — press send` : isAppendMode ? "Describe the next shot, or attach a video to add to the end…" : attachment && !isContinueMode ? "Optional: describe your video…" : isContinueMode ? `Continue editing at ${s.targetSec.toFixed(1)}s — describe what to change or ask about it…` : mediaType === "storyboard" ? "Storyboard file selected below" : mediaType === "rawtree" ? "No prompt needed — uses the latest competitor data" : mediaType === "ad" ? "Describe the product or offer to advertise…" : mediaType === "company" ? "Tell us about your company — what you do and for whom…" : `Describe your ${s.clipCopy} video`;
-  const submitLabel = isAutoMode ? "Send" : isAppendMode ? "Append shot" : isContinueMode ? "Send edit or question" : attachment ? "Import attached video" : mediaType === "storyboard" ? "Render storyboard" : mediaType === "rawtree" ? "Create competitor summary" : mediaType === "ad" ? "Create ad" : mediaType === "company" ? "Create company short" : "Generate quick clip";
+  const placeholder = isAutoMode && sourceProject ? `Append “${sourceProject.title}” — press send, or add a note` : isAutoMode && attachment ? "Optional: say what to do with this clip…" : isAtEnd ? "What happens next? e.g. “she waves goodbye”…" : isAutoMode ? "Describe a change, ask a question, or say “make it 3 seconds longer”…" : isAppendMode && sourceProject ? `Append “${sourceProject.title}” — press send` : isAppendMode ? "Describe the next shot, or attach a video to add to the end…" : attachment && !isContinueMode ? "Optional: describe your video…" : isContinueMode ? `Continue editing at ${s.targetSec.toFixed(1)}s — describe what to change or ask about it…` : mediaType === "storyboard" ? "Storyboard file selected below" : mediaType === "rawtree" ? "No prompt needed — uses the latest competitor data" : mediaType === "ad" ? "Describe the product or offer to advertise…" : mediaType === "company" ? "Tell us about your company — what you do and for whom…" : mediaType === "stories" ? "A place, a product or a moment — we'll write a few short stories…" : `Describe your ${s.clipCopy} video`;
+  const submitLabel = isAutoMode ? "Send" : isAppendMode ? "Append shot" : isContinueMode ? "Send edit or question" : attachment ? "Import attached video" : mediaType === "storyboard" ? "Render storyboard" : mediaType === "rawtree" ? "Create competitor summary" : mediaType === "ad" ? "Create ad" : mediaType === "company" ? "Create company short" : mediaType === "stories" ? "Write stories" : "Generate quick clip";
 
   return (
     <div
@@ -47,6 +49,9 @@ export default function Composer({ studio }: { studio: Studio }) {
         )}
       </AnimatePresence>
       <input ref={fileInputRef} type="file" accept={VIDEO_ACCEPT} hidden onChange={s.onFileInputChange} />
+      <AnimatePresence initial={false}>
+        {!isContinueMode && s.stories.session && <motion.div key={`stories-${s.stories.session.key}`} {...collapse}><StoryPicker stories={s.stories} /></motion.div>}
+      </AnimatePresence>
       {isContinueMode && (
         <div className="mb-2.5 ml-3.5 flex flex-wrap items-center gap-2 text-left max-[760px]:ml-0">
           <Segmented
@@ -203,11 +208,31 @@ export default function Composer({ studio }: { studio: Studio }) {
           <AnimatePresence initial={false}>
             {mediaType && (
               <motion.div key="source-chip" className="mt-3 ml-2.5 inline-flex items-center gap-2 rounded-full border border-[#3a3a3a] bg-[#181818] py-[5px] pr-1.5 pl-3 text-[12px] text-[#cfcfcf]" {...pop}>
-                <span>{mediaType === "storyboard" ? "☷ Storyboard file" : mediaType === "rawtree" ? "◎ Competitor summary" : mediaType === "ad" ? "✦ New ad" : "◆ Company short"}</span>
+                <span>{mediaType === "storyboard" ? "☷ Storyboard file" : mediaType === "rawtree" ? "◎ Competitor summary" : mediaType === "ad" ? "✦ New ad" : mediaType === "stories" ? "❖ Stories" : "◆ Company short"}</span>
                 <button type="button" className={CHIP_CLOSE} onClick={() => s.selectMediaType(null)} aria-label="Back to quick clip">✕</button>
               </motion.div>
             )}
           </AnimatePresence>
+          {mediaType === "stories" && (
+            <>
+              <Segmented
+                id="story-count"
+                label="Number of stories"
+                className="mt-3 ml-2 max-[760px]:mt-2.5 max-[760px]:ml-2.5"
+                value={s.storyCount}
+                onSelect={s.setStoryCount}
+                options={[3, 4].map((count) => ({ value: count, label: `${count} stories` }))}
+              />
+              <Segmented
+                id="story-length"
+                label="Video length"
+                className="mt-3 ml-2 max-[760px]:mt-2.5 max-[760px]:ml-2.5"
+                value={s.storyLength}
+                onSelect={s.setStoryLength}
+                options={[5, 10].map((length) => ({ value: length, label: `${length}s` }))}
+              />
+            </>
+          )}
           {isPreset(mediaType) && (
             <Segmented
               id="preset-length"

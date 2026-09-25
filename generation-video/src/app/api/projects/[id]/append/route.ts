@@ -3,6 +3,7 @@ import { logUserPrompt } from "@/lib/user-prompts";
 import { streamable } from "@/lib/ndjson";
 import { actionErrorResponse, appendToProject } from "@/lib/project-actions";
 import { logException } from "@/lib/runtime-log";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -49,4 +50,4 @@ async function handlePost(request: Request, { params }: { params: Promise<{ id: 
 }
 
 /** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
-export const POST = logUserPrompt("append", streamable(handlePost));
+export const POST = jobable("append", logUserPrompt("append", streamable(handlePost)));

@@ -16,6 +16,7 @@ from contracts.research import CompanyProfile, Finding, ResearchSessionState, So
 from contracts.story import MAX_BEATS, CompetitiveLandscape, StoryBeat, StoryPlan, StoryTemplate, TemplateRole
 
 from .competitors import mentions
+from .playbook import STORY_RULES
 from .story_llm import JsonLlm
 
 MAX_FACTS = 40
@@ -40,6 +41,7 @@ How {name} stands apart (cite the same ids): {diffs}
 Brand voice: {voice}. Imagery: {imagery}
 Templates (pick the one that fits the request best; "{default}" unless the request asks otherwise):
 {templates}
+{playbook}
 Rules: exactly one beat per scene of the chosen template, in order. "message" is what the scene says: one short sentence using only the facts above (no numbers or prices unless a fact states them). "visual" is what the viewer sees: one concrete photo idea (subject, setting, light) with no text, logos, screens with words, or other companies' products. Never name or show other companies.
 Reply with only JSON: {{"template": "<id>", "reason": "<why this template>", "title": "<at most 8 words>", "logline": "<the story in one sentence>", "tone": "<2-4 words>", "audience": "<who it speaks to>", "call_to_action": "<at most 6 words>", "beats": [{{"message": "...", "visual": "...", "findings": ["F1"]}}]}}"""
 
@@ -201,7 +203,7 @@ def write_storyline(state: ResearchSessionState, landscape: Optional[Competitive
         what=profile.what_they_do.text if profile and profile.what_they_do else "",
         facts="\n".join("{} [{}] {}".format(label, f.topic, _clip(f.claim, 240)) for label, f in ids.items())
         or "none", diffs=diffs, voice=profile.brand_voice.text if profile and profile.brand_voice else "unknown",
-        imagery=imagery or "unknown", default=default.id, templates="\n".join(template_lines)))
+        imagery=imagery or "unknown", default=default.id, templates="\n".join(template_lines), playbook=STORY_RULES))
     got = got if isinstance(got, dict) else {}
 
     by_id = {t.id: t for t in templates}

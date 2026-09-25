@@ -1,6 +1,7 @@
 import { loadEnvConfig } from "@next/env";
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { abortableDelay, emitEvent, throwIfClientAborted } from "@/lib/progress";
+import { ClientAbortedError, abortableDelay, emitEvent, takeJobMemo, throwIfClientAborted } from "@/lib/progress";
 import { logInfo } from "@/lib/runtime-log";
 
 const MAX_ATTEMPTS = 3;
@@ -220,6 +221,43 @@ async function pollForSample(pollingUrl: URL, maxPollMs: number, resultLabel: st
   throw new BflError(`BFL generation timed out after ${maxPollMs / 1000}s (last status: ${lastStatus}). BFL may be under heavy load; try again.`);
 }
 
+/** Identifies one BFL submission (endpoint + exact payload) so a resumed job can find the request it already paid for. */
+function stepKey(kind: "image" | "video", url: string, payload: string) {
+  return `${kind}:${createHash("sha256").update(url).update("\n").update(payload).digest("hex").slice(0, 24)}`;
+}
+
+/**
+ * Submits `payload` to BFL and polls it. When the current background job is a resume of an interrupted attempt that
+ * already submitted this exact request (< 1h ago), polls that request instead of paying for a new one; if the old
+ * request can't be polled any more, falls back to a fresh submission. New submissions are reported as `bfl_pending`.
+ */
+async function submitAndPoll(kind: "image" | "video", url: string, payload: string, maxPollMs: number, action: string, rejected: string) {
+  const step = stepKey(kind, url, payload);
+  const previous = takeJobMemo(step);
+  if (previous) {
+    try {
+      const pollingUrl = validatedPollingUrl({ polling_url: previous });
+      logInfo("bfl_resume_polling", { kind, step });
+      emitEvent({ type: "stage", stage: kind, label: kind === "video" ? "Picking up the video BFL was already generating…" : "Picking up the image BFL was already generating…" });
+      const sample = await pollForSample(pollingUrl, maxPollMs, kind);
+      // Delivery URLs are short-lived: only reuse a result that can still be downloaded.
+      const probe = await fetch(sample, { headers: { Range: "bytes=0-0" } });
+      await probe.body?.cancel().catch(() => undefined);
+      if (probe.ok) return sample;
+      throw new BflError(`the earlier result can no longer be downloaded (HTTP ${probe.status})`);
+    } catch (error) {
+      if (error instanceof ClientAbortedError) throw error;
+      logInfo("bfl_resume_polling_failed", { kind, step, reason: error instanceof Error ? error.message.slice(0, 200) : String(error) });
+    }
+  }
+  const submissionResponse = await request(url, { method: "POST", headers: headers(), body: payload }, action);
+  if (!submissionResponse.ok) throw await httpError(rejected, submissionResponse);
+  const submission = await readJson<Submission>(submissionResponse, action);
+  const pollingUrl = validatedPollingUrl(submission);
+  emitEvent({ type: "bfl_pending", step, pollingUrl: pollingUrl.toString() });
+  return pollForSample(pollingUrl, maxPollMs, kind);
+}
+
 export async function generateBflImage(
   prompt: string,
   width = 1024,
@@ -227,23 +265,15 @@ export async function generateBflImage(
   inputImage?: string,
   seed?: number,
 ) {
-  const submissionResponse = await request(endpoint(), {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({
-      prompt,
-      width,
-      height,
-      output_format: "png",
-      ...(inputImage ? { input_image: inputImage } : {}),
-      ...(seed === undefined ? {} : { seed }),
-    }),
-  }, "BFL image request");
-  if (!submissionResponse.ok) {
-    throw await httpError("BFL rejected the image request", submissionResponse);
-  }
-  const submission = await readJson<Submission>(submissionResponse, "BFL image request");
-  return pollForSample(validatedPollingUrl(submission), MAX_POLL_MS, "image");
+  const payload = JSON.stringify({
+    prompt,
+    width,
+    height,
+    output_format: "png",
+    ...(inputImage ? { input_image: inputImage } : {}),
+    ...(seed === undefined ? {} : { seed }),
+  });
+  return submitAndPoll("image", endpoint(), payload, MAX_POLL_MS, "BFL image request", "BFL rejected the image request");
 }
 
 /** FLUX 3 accepts whole-second durations from 5 to 20; shorter clips must be trimmed after download. */
@@ -322,25 +352,17 @@ export async function generateBflVideoDetailed(input: {
   for (let step = first; step < ladder.length; step += 1) {
     const settings = ladder[step];
     try {
-      const submissionResponse = await request(videoEndpoint(), {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({
-          mode: input.startVideo ? "v2v" : input.keyframes?.length ? "i2v" : "t2v",
-          prompt: input.prompt,
-          ...(input.startVideo ? { start_video: input.startVideo } : input.keyframes?.length ? { keyframes: input.keyframes } : {}),
-          duration,
-          aspect_ratio: input.aspectRatio ?? "16:9",
-          resolution: settings.resolution,
-          draft: settings.draft,
-          generate_audio: input.generateAudio ?? true,
-        }),
-      }, "BFL video request");
-      if (!submissionResponse.ok) {
-        throw await httpError("BFL rejected the video request", submissionResponse);
-      }
-      const submission = await readJson<Submission>(submissionResponse, "BFL video request");
-      const url = await pollForSample(validatedPollingUrl(submission), settings.draft ? MAX_VIDEO_POLL_MS : MAX_FINAL_VIDEO_POLL_MS, "video");
+      const payload = JSON.stringify({
+        mode: input.startVideo ? "v2v" : input.keyframes?.length ? "i2v" : "t2v",
+        prompt: input.prompt,
+        ...(input.startVideo ? { start_video: input.startVideo } : input.keyframes?.length ? { keyframes: input.keyframes } : {}),
+        duration,
+        aspect_ratio: input.aspectRatio ?? "16:9",
+        resolution: settings.resolution,
+        draft: settings.draft,
+        generate_audio: input.generateAudio ?? true,
+      });
+      const url = await submitAndPoll("video", videoEndpoint(), payload, settings.draft ? MAX_VIDEO_POLL_MS : MAX_FINAL_VIDEO_POLL_MS, "BFL video request", "BFL rejected the video request");
       if (quality === "final") acceptedFinalStep = step;
       return { url, draft: settings.draft, resolution: settings.resolution, quality: settings.draft ? "draft" : "final" };
     } catch (error) {

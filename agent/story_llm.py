@@ -17,8 +17,8 @@ _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="story-llm")
 
 
 class JsonLlm:
-    def __init__(self, llm=None, model: str = "deterministic"):
-        self.llm, self.model = llm, model
+    def __init__(self, llm=None, model: str = "deterministic", timeout_s: Optional[float] = None):
+        self.llm, self.model, self.timeout_s = llm, model, timeout_s
         self.calls = self.tokens = self.failures = 0
         self.lock = threading.Lock()
 
@@ -29,6 +29,7 @@ class JsonLlm:
     def ask(self, prompt: str, timeout_s: Optional[float] = None) -> Optional[dict]:
         if self.llm is None:
             return None
+        timeout_s = timeout_s or self.timeout_s
 
         def call():
             return self.llm.invoke([HumanMessage(prompt)])

@@ -17,6 +17,7 @@ import { clampWindowSec, MOMENT_RANGE, validateMomentRange } from "@/lib/project
 import { loadProject, type Project, type ProjectFrame } from "@/lib/projects";
 import { mergeMemorySources, retrieveMemory } from "@/lib/memory";
 import { logException, logInfo } from "@/lib/runtime-log";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -196,4 +197,4 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
   }
 }
 
-export const POST = logUserPrompt("command", handlePost);
+export const POST = jobable("command", logUserPrompt("command", handlePost));

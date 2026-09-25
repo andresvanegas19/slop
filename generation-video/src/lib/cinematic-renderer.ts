@@ -423,10 +423,13 @@ export async function renderCinematicStoryboard(storyboard: Storyboard, runId: s
     const clipPath = path.join(videos, `${runId}-${index + 1}.mp4`);
     const endPinned = continuesIntoNext(storyboard, index);
     const keyframeBytes = await readFile(keyframe.path);
-    const cacheKey = createHash("sha256").update(keyframeBytes).update(`|${seconds.toFixed(3)}|${quality}|${endPinned}|${aspect}`).digest("hex").slice(0, 32);
-    const cached = path.join(cache, `${cacheKey}.mp4`);
-    if (await exists(cached)) {
-      await copyFile(cached, clipPath);
+    // Unchanged keyframes (e.g. the other scenes after a frame edit) reuse their shot; a final-quality shot is reused
+    // even when this render asks for draft.
+    const cacheFile = (level: VideoQuality) => path.join(cache, `${createHash("sha256").update(keyframeBytes).update(`|${seconds.toFixed(3)}|${level}|${endPinned}|${aspect}`).digest("hex").slice(0, 32)}.mp4`);
+    const cached = cacheFile(quality);
+    const reusable = (await exists(cacheFile("final"))) ? cacheFile("final") : (await exists(cached)) ? cached : undefined;
+    if (reusable) {
+      await copyFile(reusable, clipPath);
       reporter.set(index, "reused", { done: true });
       return { clipPath, keyframeFilename: keyframe.filename, engine: "i2v-cached", keyframeMs: keyframe.ms, videoMs: 0, endPinned };
     }

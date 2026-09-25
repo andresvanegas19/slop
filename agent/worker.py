@@ -39,10 +39,11 @@ def _age_s(ctx):
 
 class AgentWorker:
     def __init__(self, settings, agent: CompanyAgent, store, coordinator=None, rawtree=None, publish=False,
-                 research=None):
+                 research=None, story=None):
         self.settings, self.agent, self.store = settings, agent, store
         self.coordinator, self.rawtree, self.publish = coordinator, rawtree, publish
         self.research = research  # ResearchManager (agent/research.py), or None
+        self.story = story  # StoryService (agent/story_api.py): detection, competitors, storyline; or None
         self.pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_PROMPTS + 1, thread_name_prefix="agent")
         self.prompt_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PROMPTS)
         self.loop_lock = threading.Lock()
@@ -129,7 +130,8 @@ class AgentWorker:
                 "lastContextAt": cached.generated_at.isoformat() if cached else None,
                 "lastTick": self.last_tick,
                 "research": None if self.research is None else {"running": self.research.running(),
-                                                                "publish": self.research.publish}}
+                                                                "publish": self.research.publish},
+                "story": None if self.story is None else self.story.health()}
 
 
 def make_handler(worker: AgentWorker):
@@ -175,12 +177,17 @@ def make_handler(worker: AgentWorker):
                 if ctx is None:
                     return self._send(404, {"error": "no context yet"})
                 return self._send(200, {"context": ctx.model_dump(mode="json"), "stale": True})
+            routed = worker.story.handle("GET", path, None) if worker.story is not None else None
+            if routed is not None:
+                return self._send(*routed)
             m = RESEARCH_PATH.match(path)
             if m and worker.research is not None and m.group(2) in (None, "events"):
                 view = worker.research.view(m.group(1))
                 if view is None:
                     return self._send(404, {"error": "no research session {}".format(m.group(1))})
                 if m.group(2) is None:
+                    if worker.story is not None:
+                        view.update(worker.story.extras(m.group(1)))
                     return self._send(200, view)
                 return self._stream_events(m.group(1), query)
             return self._send(404, {"error": "not found"})
@@ -210,7 +217,8 @@ def make_handler(worker: AgentWorker):
                         self.wfile.flush()
                         last_write = time.time()
                         continue
-                    if not follow or worker.research.finished(sid) or time.time() - started > STREAM_MAX_S:
+                    finished = worker.research.finished(sid) and not (worker.story and worker.story.pending(sid))
+                    if not follow or finished or time.time() - started > STREAM_MAX_S:
                         break
                     if time.time() - last_write > HEARTBEAT_S:
                         self.wfile.write((json.dumps({"type": "heartbeat", "after": after}) + "\n").encode())
@@ -225,6 +233,9 @@ def make_handler(worker: AgentWorker):
             path = self.path.split("?")[0]
             if path == "/context":
                 return self._context()
+            if worker.story is not None and worker.story.handles(path):
+                body = self._body()
+                return None if body is None else self._send(*worker.story.handle("POST", path, body))
             if worker.research is None or not (path == "/research" or RESEARCH_PATH.match(path)):
                 return self._send(404, {"error": "not found"})
             body = self._body()

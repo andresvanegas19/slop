@@ -1,6 +1,6 @@
 /* Shared studio types (moved verbatim from app/page.tsx). */
 
-export type MediaType = "storyboard" | "rawtree" | "ad" | "company";
+export type MediaType = "storyboard" | "rawtree" | "ad" | "company" | "stories";
 export type PresetType = "ad" | "company";
 export type HistoryKind = "clip" | "storyboard" | "rawtree" | "upload" | "ad" | "company";
 

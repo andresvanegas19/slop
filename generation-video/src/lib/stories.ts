@@ -56,7 +56,7 @@ export type Story = {
   beats: StoryBeat[];
   source: "llm" | "fallback";
 };
-export type StoryRender = { storyId: string; projectId: string; videoUrl: string; hiResVideoUrl: string; durationSec: number; pins: number[]; bfl: string; at: string };
+export type StoryRender = { storyId: string; projectId: string; videoUrl: string; hiResVideoUrl: string; durationSec: number; pins: number[]; bfl: string; at: string; pinPsnr?: number[] };
 export type StorySet = {
   id: string;
   prompt: string;
@@ -451,17 +451,36 @@ function rejectedFractional(error: unknown) {
 // Which pin format BFL accepted last in this process.
 let pinFormat: "fractional" | "whole" | undefined;
 
+/**
+ * The i2v prompt for a story. The stills are pinned, so the prompt only directs the motion BETWEEN them; naming a new
+ * opening ("it opens on steam rising…") made FLUX 3 invent a close-up insert and hard-cut into the pinned frames.
+ */
 export function storyVideoPrompt(story: Story) {
   const [first, second, third] = story.beats;
+  const motion = (text: string) => text.replace(/[.\s]*$/, ".");
   return [
+    "One continuous handheld phone shot with no cuts, no inserts and no cutaways: the video starts exactly on the first keyframe image, passes through the second keyframe at the middle and ends exactly on the third keyframe image, with smooth natural motion between them.",
     continuityPrefix(story),
-    "One continuous handheld phone shot, no cuts, that moves through three moments of the same scene.",
-    `It opens on: ${first.caption}. ${first.motion_to_next.replace(/[.\s]*$/, ".")}`,
-    `Midway: ${second.caption}. ${second.motion_to_next.replace(/[.\s]*$/, ".")}`,
-    `It ends on: ${third.caption}. ${third.motion_to_next.replace(/[.\s]*$/, ".")}`,
+    `From the first frame: ${motion(first.motion_to_next)}`,
+    `Then: ${motion(second.motion_to_next)}`,
+    `At the end: ${motion(third.motion_to_next)}`,
     `${HOUSE_LOOK}.`,
     "Audio: natural ambient sound of the place; no music, no dialogue. No on-screen text.",
   ].join(" ").replace(/\s+/g, " ").trim();
+}
+
+/** PSNR (dB) of a video frame at `atSec` against an image, both scaled to 480x270 (diagnostics for the pins). */
+async function framePsnr(video: string, atSec: number, image: string) {
+  const scale = "scale=480:270:force_original_aspect_ratio=increase,crop=480:270,format=yuv420p";
+  const output = await new Promise<string>((resolve) => {
+    const child = spawn("ffmpeg", ["-hide_banner", "-ss", atSec.toFixed(3), "-i", video, "-i", image, "-lavfi", `[0:v]${scale}[a];[1:v]${scale}[b];[a][b]psnr`, "-frames:v", "1", "-f", "null", "-"], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on("error", () => resolve(""));
+    child.on("close", () => resolve(stderr));
+  });
+  const match = output.match(/average:(inf|[\d.]+)/);
+  return match ? (match[1] === "inf" ? 100 : Math.round(Number(match[1]) * 10) / 10) : 0;
 }
 
 function segmentFilter(startFrame: number, endFrame: number) {
@@ -539,6 +558,9 @@ async function renderStory(set: StorySet, story: Story, durationSec: StoryDurati
     ], "write the story master");
     // One segment per beat: [0, pin2), [pin2, d − d/4), [d − d/4, d] — the last segment ends on the third still.
     const middle = generated.pins[1];
+    // Diagnostics: how closely the delivered frames match the pinned stills (≳20 dB = the still is there).
+    const pinPsnr = await Promise.all([[0, 0], [middle, 1], [Math.max(0, length - 1 / fps), 2]].map(([at, beat]) => framePsnr(hiRes, at, stills[beat] as string)));
+    logInfo("story_pin_check", { storyId: story.id, pins: generated.pins.join("/"), psnr: pinPsnr.join("/") });
     const tail = Math.max(middle + 0.5, length - d / 4);
     const bounds = [0, middle, tail, length];
     const segmentFiles: string[] = [];
@@ -569,7 +591,7 @@ async function renderStory(set: StorySet, story: Story, durationSec: StoryDurati
     schedulePublish(project, "generated");
     const render: StoryRender = {
       storyId: story.id, projectId: project.id, videoUrl: project.videoUrl, hiResVideoUrl: videoUrl(hiResFilename), durationSec: d,
-      pins: generated.pins, bfl: `${generated.result.resolution}${generated.result.draft ? " draft" : ""}`, at: new Date().toISOString(),
+      pins: generated.pins, bfl: `${generated.result.resolution}${generated.result.draft ? " draft" : ""}`, at: new Date().toISOString(), pinPsnr,
     };
     logInfo("story_rendered", { setId: set.id, storyId: story.id, projectId: project.id, delivered: `${info.width}x${info.height}`, bfl: render.bfl, pins: generated.pins.join("/") });
     return { project, render, delivered: `${info.width}x${info.height}` };

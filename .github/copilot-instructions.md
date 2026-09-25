@@ -70,6 +70,14 @@ the parent environment explicitly.
   `src/lib/company-agent.ts` calls it from every generation route and never
   throws. Only the distilled `CompanyContext` brief reaches Next/BFL prompts.
   See `agent/README.md`.
+- Content strategy (audience-first hooks in the first 0.6–2 s, a value shift per
+  scene, the 5-7-10 angle/format matrix, the growth/connection/sale funnel) lives
+  in `src/lib/content-playbook.ts`: `scriptPlaybook(planContent())` is in the
+  preset script prompt (with a planning-only `SHIFT:` line per scene) and
+  `shotPlaybook()` in the cinematic shot prompt. `agent/playbook.py` mirrors it
+  for `agent/storyline.py`, and `knowledge/content-strategy.md` holds the
+  long-form notes for RAG; update all three together. The Copilot custom agent
+  `.github/agents/content-strategist.agent.md` applies the same techniques.
 
 ## Repository-specific conventions
 

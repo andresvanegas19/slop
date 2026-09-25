@@ -17,6 +17,7 @@ import {
 } from "@/lib/slop-storyboard";
 import { renderStoryboard, totalDurationMs } from "@/lib/storyboard-renderer";
 import { validateStoryboard } from "@/lib/storyboard";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 
@@ -126,7 +127,7 @@ export async function GET(request: Request) {
 }
 
 /** POST `{ dryRun?: boolean, includeTestRows?: boolean }` (empty body = render with real rows only). */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const raw = await request.text();
   let body: Record<string, unknown> = {};
   if (raw.trim()) {
@@ -142,3 +143,5 @@ export async function POST(request: Request) {
   }
   return handle({ dryRun: flag(body.dryRun), includeTestRows: flag(body.includeTestRows) });
 }
+
+export const POST = jobable("rawtree", handlePost);

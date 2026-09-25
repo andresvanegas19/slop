@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 import path from "node:path";
-import { ClientAbortedError, progressSignal } from "@/lib/progress";
+import { ClientAbortedError, progressSignal, recordJobMemo, takeJobMemo } from "@/lib/progress";
 
 const API_BASE = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free";
@@ -146,6 +147,19 @@ export async function createChatCompletion(request: {
   onToken?: (text: string) => void;
 }): Promise<ChatCompletionResult> {
   const key = apiKey();
+  // A resumed background job replays the answers its interrupted attempt already got, so the prompts it sends to
+  // BFL come out identical and the paid BFL requests can be picked up again (see jobs.ts / bfl.ts).
+  const memoStep = `llm:${createHash("sha256").update(JSON.stringify([request.model, request.messages, request.tools ?? null, request.maxTokens ?? null, request.temperature ?? null])).digest("hex").slice(0, 24)}`;
+  const memoized = takeJobMemo(memoStep);
+  if (memoized) {
+    try {
+      const result = JSON.parse(memoized) as ChatCompletionResult;
+      request.onToken?.(result.content);
+      return result;
+    } catch {
+      // Fall through to a real request.
+    }
+  }
   const payload = JSON.stringify({
     model: request.model,
     messages: request.messages,
@@ -166,7 +180,12 @@ export async function createChatCompletion(request: {
   }
   if (!response) throw new OpenRouterError("OpenRouter chat request was not sent.", 502);
   if (!response.ok) throw await httpError("OpenRouter chat request", response);
-  if (request.onToken) return readStream(response, request.model, request.onToken);
+  const result = request.onToken ? await readStream(response, request.model, request.onToken) : await readCompletion(response, request.model);
+  recordJobMemo(memoStep, JSON.stringify(result));
+  return result;
+}
+
+async function readCompletion(response: Response, requestedModel: string): Promise<ChatCompletionResult> {
 
   const text = await response.text();
   let body: {
@@ -189,7 +208,7 @@ export async function createChatCompletion(request: {
     content: typeof choice.message.content === "string" ? choice.message.content : "",
     toolCalls: Array.isArray(choice.message.tool_calls) ? choice.message.tool_calls : [],
     finishReason: choice.finish_reason,
-    model: body.model ?? request.model,
+    model: body.model ?? requestedModel,
   };
 }
 

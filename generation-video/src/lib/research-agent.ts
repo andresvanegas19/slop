@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { logError, logException, logInfo } from "@/lib/runtime-log";
+import type { Storyline } from "@/lib/storyline";
 import { ANONYMOUS_USER, parseUserId } from "@/lib/user-context";
 
 /**
@@ -73,6 +74,18 @@ export type ResearchSession = {
   pages: { url: string; title: string; status: number; chars: number; fetched_at: string }[];
   stats: { pages: number; findings: number; tokens: number; input_tokens: number; output_tokens: number; llm_calls: number; rounds: number };
   error: string | null;
+  /** Competitor research (agent/story_api.py); names stay server-side except as `avoid_terms` for filtering. */
+  competitors?: CompetitorLandscape | null;
+  /** Latest storyline written by the agent's storyline tool, if any. */
+  storyline?: Storyline | null;
+};
+export type CompetitorLandscape = {
+  status: string;
+  message?: string;
+  competitors: { id?: string; name: string; domain?: string | null; verified: boolean; summary?: string; claims?: string[]; pages?: number }[];
+  differentiators: string[];
+  competitor_themes: string[];
+  avoid_terms: string[];
 };
 
 function agentUrl() {
@@ -154,7 +167,7 @@ export function agentErrorResponse(error: unknown, route: string) {
 }
 
 /** Proxies one JSON call to the agent and returns its status + body (errors as `{ error }`). */
-export async function proxyJson(route: string, pathname: string, init: RequestInit = {}) {
+export async function proxyJson(route: string, pathname: string, init: RequestInit & { timeoutMs?: number | null } = {}) {
   try {
     const response = await agentFetch(pathname, init);
     return agentReply(response.status, await readJson(response), route);
