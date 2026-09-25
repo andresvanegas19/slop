@@ -36,8 +36,9 @@ from .research_tools import (MAX_OPEN_QUESTIONS, MAX_OPTIONS, MAX_QUOTE_CHARS, M
                              clean_quote, norm, quote_in_page)
 from .user_context import expressed_topics, summary_line, user_context, valid_user_id
 from .videos import recent_videos
-from .web import (FetchError, HostNotAllowed, Page, WebFetcher, compact, css_colors, find_dates, home_guard,
-                  home_problem, host_of, link_category, normalize_url, prioritized_links, site_of, slugs)
+from .web import (EXPECTED_FETCH_ERRORS, FetchError, HostNotAllowed, Page, WebFetcher, compact, css_colors,
+                  fetch_error_reason, find_dates, home_guard, home_problem, host_of, link_category, normalize_url,
+                  prioritized_links, site_of, slugs)
 
 log = logging.getLogger("agent.research")
 
@@ -583,6 +584,14 @@ class ResearchSession:
                 candidates += ["https://www.{}.{}/".format(s, tld), "https://{}.{}/".format(s, tld)]
         names = {compact(intent.company_name)} | {compact(s) for s in slugs(intent.company_name)}
         seen, checked, rejected = set(), 0, set()
+        misses = []  # "address: why it was not the company's site", for the final error
+
+        def miss(url_, reason, quiet=False):
+            misses.append("{}: {}".format(url_.split("//", 1)[-1].rstrip("/"), reason))
+            if not quiet:
+                self.emit("status", status=self.state.status.value, message="skipping {}: {}".format(
+                    site_of(host_of(url_)), reason))
+
         for url in candidates:
             if url in seen or checked >= 12 or self.stop_event.is_set() or site_of(host_of(url)) in rejected:
                 continue
@@ -593,19 +602,27 @@ class ResearchSession:
                 page = self.fetcher.fetch(url, allowed=home_guard(url, names))
             except HostNotAllowed as e:  # redirected to a parking page or another company's site
                 rejected.add(site_of(host_of(url)))
-                self.emit("status", status=self.state.status.value, message="skipping {}: redirects to {}".format(
-                    site_of(host_of(url)), str(e).rsplit(": ", 1)[-1][:120]))
+                miss(url, "redirects to {}".format(str(e).rsplit(": ", 1)[-1][:120]))
                 continue
-            except Exception:
+            except EXPECTED_FETCH_ERRORS as e:  # no site there (DNS, refused, timeout, robots.txt …)
+                miss(url, fetch_error_reason(e), quiet=True)
+                continue
+            except Exception as e:
+                log.exception("checking %s for %s failed", url, intent.company_name)
+                miss(url, "unexpected {}".format(fetch_error_reason(e)), quiet=True)
+                self.emit("error", where="resolve", url=url, message=fetch_error_reason(e))
+                continue
+            if page.status != 200:
+                miss(url, "HTTP {}".format(page.status), quiet=True)
                 continue
             body = compact(" ".join([page.title, page.description, page.text[:30000]]))
-            if page.status != 200 or not any(n and n in body for n in names):
+            if not any(n and n in body for n in names):
+                miss(url, "page does not mention {}".format(intent.company_name[:60]), quiet=True)
                 continue
             problem = home_problem(url, page, names)
             if problem:  # a parked domain or someone else's site: the www / bare twin will not be better
                 rejected.add(site_of(host_of(url)))
-                self.emit("status", status=self.state.status.value,
-                          message="skipping {}: {}".format(site_of(host_of(url)), problem))
+                miss(url, problem)
                 continue
             with self.lock:
                 self.state.allowed_hosts = sorted({site_of(host_of(url)), site_of(host_of(page.url))})
@@ -618,8 +635,9 @@ class ResearchSession:
             self._remember(url, page)
             self.brand_colors(page)
             return
-        self.state.error = ("could not find {}'s website (tried {} addresses); include the domain in the prompt, "
-                            "e.g. 'coca-cola.com'".format(intent.company_name, checked))
+        why = "; ".join(misses[:4]) + (" …" if len(misses) > 4 else "")
+        self.state.error = ("could not find {}'s website (tried {} addresses{}); include the domain in the prompt, "
+                            "e.g. 'coca-cola.com'".format(intent.company_name, checked, ": " + why if why else ""))
 
     def brand_colors(self, page):
         """Brand colors usually live in the site's stylesheets: scan up to two same-site CSS files of the homepage."""
@@ -630,10 +648,14 @@ class ResearchSession:
                 continue
             try:
                 got = self.fetcher.fetch(url, allowed=self.allowed)
-                if got.status == 200:
-                    css.append(got.text)
-            except Exception:
+            except EXPECTED_FETCH_ERRORS as e:  # colors are optional: note it and use the page's own colors
+                event(log, "research_stylesheet_skipped", logging.DEBUG, url=url, reason=fetch_error_reason(e))
                 continue
+            except Exception:
+                log.exception("reading stylesheet %s failed", url)
+                continue
+            if got.status == 200:
+                css.append(got.text)
         data = self.pages.get(page.url)
         if not css or data is None:
             return

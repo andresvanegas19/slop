@@ -28,7 +28,8 @@ from core.logs import event, in_context
 
 from .research_tools import MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, clean_quote, norm, quote_in_page
 from .story_llm import JsonLlm
-from .web import (HostNotAllowed, Page, compact, home_guard, home_problem, host_of, link_category, normalize_url,
+from .web import (EXPECTED_FETCH_ERRORS, HostNotAllowed, Page, compact, fetch_error_reason, home_guard, home_problem,
+                  host_of, link_category, normalize_url,
                   prioritized_links, site_of, slugs)
 
 log = logging.getLogger("agent.competitors")
@@ -109,7 +110,11 @@ def watch_peers(watch_file: str, company: str) -> List[dict]:
     """Other tracked entities of config/watch.yaml when the company is one of them (e.g. Notion -> Linear, Jira)."""
     try:
         data = yaml.safe_load(Path(watch_file).read_text()) or {}
-    except (OSError, yaml.YAMLError):
+    except FileNotFoundError:
+        return []
+    except (OSError, yaml.YAMLError) as e:  # a broken config should be visible, but never block research
+        event(log, "watch_file_unreadable", logging.WARNING, path=watch_file, error="{}: {}".format(
+            type(e).__name__, str(e)[:200]))
         return []
     sources = data.get("sources") or []
     names: Dict[str, dict] = {}
@@ -257,22 +262,34 @@ class CompetitorResearch:
         for s in slugs(comp.name)[:2]:
             urls += ["https://www.{}.com/".format(s), "https://{}.com/".format(s)]
         names = {compact(comp.name)} | {compact(s) for s in slugs(comp.name)}
-        tried, rejected = set(), set()
+        tried, rejected, misses = set(), set(), []
         for url in urls:
             if url in tried or len(tried) >= 4 or self.stopped() or site_of(host_of(url)) in rejected:
                 continue
             tried.add(url)
             try:
                 page = self.fetcher.fetch(url, allowed=home_guard(url, names))
-            except HostNotAllowed:  # redirected to a parking page or another company's site
+            except HostNotAllowed as e:  # redirected to a parking page or another company's site
                 rejected.add(site_of(host_of(url)))
+                misses.append("{}: redirects to {}".format(site_of(host_of(url)), str(e).rsplit(": ", 1)[-1][:80]))
                 continue
-            except Exception:
+            except EXPECTED_FETCH_ERRORS as e:
+                misses.append("{}: {}".format(host_of(url), fetch_error_reason(e)))
+                continue
+            except Exception as e:
+                log.exception("verifying %s at %s failed", comp.name, url)
+                misses.append("{}: unexpected {}".format(host_of(url), fetch_error_reason(e)))
                 continue
             body = compact(" ".join([page.title, page.description, page.text[:30000]]))
             found = page.status == 200 and any(n and n in body for n in names)
-            if found and home_problem(url, page, names):  # parked, or someone else's site
+            if not found:
+                misses.append("{}: {}".format(host_of(url), "HTTP {}".format(page.status) if page.status != 200
+                                              else "page does not mention {}".format(comp.name[:60])))
+                continue
+            problem = home_problem(url, page, names)
+            if problem:  # parked, or someone else's site
                 rejected.add(site_of(host_of(url)))
+                misses.append("{}: {}".format(site_of(host_of(url)), problem))
                 continue
             if found:
                 comp.verified, comp.home_url = True, page.url
@@ -286,9 +303,10 @@ class CompetitorResearch:
                 self.save()
                 self.emit("competitor", competitor=self.competitor_view(comp), stage="verified")
                 return comp
-        comp.error = "website not found (tried {})".format(len(tried))
+        why = "; ".join(misses[:3])
+        comp.error = "website not found (tried {}{})".format(len(tried), ": " + why if why else "")
         self.emit("competitors", status=self.landscape.status,
-                  message="could not verify {}'s website".format(comp.name))
+                  message="could not verify {}'s website{}".format(comp.name, ": " + why if why else ""))
         return None
 
     def allowed_for(self, comp: Competitor):
@@ -335,8 +353,10 @@ class CompetitorResearch:
             try:
                 page = self.fetcher.fetch(url, allowed=allowed)
             except Exception as e:
+                if not isinstance(e, EXPECTED_FETCH_ERRORS):
+                    log.exception("reading %s for %s failed", url, comp.name)
                 self.emit("competitors", status=self.landscape.status,
-                          message="could not read {}: {}".format(url, str(e)[:160]))
+                          message="could not read {}: {}".format(url, fetch_error_reason(e)))
                 continue
             if page.status == 200:
                 self.extract(comp, self.remember(comp, url, page))

@@ -21,6 +21,7 @@ from core.logs import event, in_context, log_context, new_trace_id
 from core.repository import StateRepository
 
 from .react import CompanyAgent
+from .market import Busy as MarketBusy
 from .research import Busy
 from .user_context import valid_user_id
 
@@ -29,6 +30,8 @@ KINDS = {"image", "video", "multishot", "storyboard", "preset", "edit"}
 MAX_BODY_BYTES = 64 * 1024
 MAX_PROMPT_CHARS = 32_000
 MAX_CONCURRENT_PROMPTS = 2
+MARKET_PATH = re.compile(r"^/market/([A-Za-z0-9_]{1,64})$")
+MARKET_STORYBOARD_PATH = re.compile(r"^/market/storyboards/([A-Za-z0-9_-]{1,64})$")
 RESEARCH_PATH = re.compile(r"^/research/([A-Za-z0-9_]{1,64})(?:/(events|answer|loop|stop))?$")
 STREAM_MAX_S = 900        # one events stream stays open at most this long; the client reconnects with ?after=
 HEARTBEAT_S = 15
@@ -40,11 +43,12 @@ def _age_s(ctx):
 
 class AgentWorker:
     def __init__(self, settings, agent: CompanyAgent, store, coordinator=None, rawtree=None, publish=False,
-                 research=None, story=None):
+                 research=None, story=None, market=None):
         self.settings, self.agent, self.store = settings, agent, store
         self.coordinator, self.rawtree, self.publish = coordinator, rawtree, publish
         self.research = research  # ResearchManager (agent/research.py), or None
         self.story = story  # StoryService (agent/story_api.py): detection, competitors, storyline; or None
+        self.market = market      # MarketManager (agent/market.py), or None
         self.pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_PROMPTS + 1, thread_name_prefix="agent")
         self.prompt_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PROMPTS)
         self.loop_lock = threading.Lock()
@@ -229,6 +233,19 @@ def make_handler(worker: AgentWorker):
             routed = worker.story.handle("GET", path, None) if worker.story is not None else None
             if routed is not None:
                 return self._send(*routed)
+            if worker.market is not None:
+                m = MARKET_STORYBOARD_PATH.match(path)
+                if m:
+                    record = worker.market.storyboard(m.group(1))
+                    if record is None:
+                        return self._send(404, {"error": "no storyboard {}".format(m.group(1))})
+                    return self._send(200, record)
+                m = MARKET_PATH.match(path)
+                if m:
+                    view = worker.market.view(m.group(1))
+                    if view is None:
+                        return self._send(404, {"error": "no market session {}".format(m.group(1))})
+                    return self._send(200, view)
             m = RESEARCH_PATH.match(path)
             if m and worker.research is not None and m.group(2) in (None, "events"):
                 view = worker.research.view(m.group(1))
@@ -285,6 +302,8 @@ def make_handler(worker: AgentWorker):
             if worker.story is not None and worker.story.handles(path):
                 body = self._body()
                 return None if body is None else self._send(*worker.story.handle("POST", path, body))
+            if path == "/market":
+                return self._market_start()
             if worker.research is None or not (path == "/research" or RESEARCH_PATH.match(path)):
                 return self._send(404, {"error": "not found"})
             body = self._body()
@@ -330,6 +349,21 @@ def make_handler(worker: AgentWorker):
             except ValueError as e:
                 return self._send(409, {"error": str(e)})
             return self._send(404, {"error": "not found"})
+
+        def _market_start(self):
+            if worker.market is None:
+                return self._send(503, {"error": "market updates are not enabled in this agent"})
+            body = self._body()
+            if body is None:
+                return None
+            prompt = body.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
+                return self._send(400, {"error": "prompt must describe your company in 1 to 4,000 characters"})
+            try:
+                sid = worker.market.start(prompt.strip())
+            except MarketBusy as e:
+                return self._send(429, {"error": str(e)})
+            return self._send(201, {"session_id": sid, "status": "starting"})
 
         def _context(self):
             body = self._body()

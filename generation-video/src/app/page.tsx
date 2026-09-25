@@ -7,6 +7,7 @@ import Composer from "@/components/studio/Composer";
 import Editor from "@/components/studio/Editor";
 import HistoryPanel, { GeneratingRow } from "@/components/studio/HistoryPanel";
 import LogDrawer, { ViewLogLink } from "@/components/studio/LogDrawer";
+import MarketMessages from "@/components/studio/MarketMessages";
 import ResearchMessages from "@/components/studio/ResearchMessages";
 import { useStudio } from "@/components/studio/hooks/useStudio";
 import { LABEL, cn, fade, fadeUp } from "@/components/studio/ui";
@@ -18,11 +19,14 @@ export default function Home() {
   const s = useStudio();
   const { isEditorOpen } = s;
   const researchSession = s.research.session;
-  // The conversation layout is used for editor threads and for a company research session.
-  const hasThread = s.hasThread || researchSession !== null;
+  // A market update is shown on the home screen only (the finished video opens in the editor).
+  const marketRun = isEditorOpen ? null : s.marketRun;
+  // The conversation layout is used for editor threads, a company research session, and a market update.
+  const hasThread = s.hasThread || researchSession !== null || marketRun !== null;
   // A new generation takes over the main stage (the composer stays below, disabled for new generations).
   const showStage = s.isGenerating && !isEditorOpen && !hasThread;
-  const threadTitle = isEditorOpen ? s.openTitle : researchSession?.company ? `Researching ${researchSession.company}` : "Company research";
+  const marketCompany = marketRun?.view?.company?.name;
+  const threadTitle = isEditorOpen ? s.openTitle : marketRun ? (marketCompany ? `Market update · ${marketCompany}` : "Market update") : researchSession?.company ? `Researching ${researchSession.company}` : "Company research";
 
   return (
     <MotionConfig reducedMotion="user">
@@ -95,13 +99,15 @@ export default function Home() {
                   >
                     {hasThread ? threadTitle : <>What&apos;s on your mind today?</>}
                   </h1>
-                  {!hasThread && <p className={cn("mt-[13px] text-[#a9a9a9]", isEditorOpen ? "mb-[26px] text-[14px]" : "mb-[45px] text-[17px] max-[760px]:mb-[26px]")}>Describe a moment and get a {s.clipCopy} video. Or use + to make an ad, a company short, or a competitor summary.</p>}
+                  {!hasThread && <p className={cn("mt-[13px] text-[#a9a9a9]", isEditorOpen ? "mb-[26px] text-[14px]" : "mb-[45px] text-[17px] max-[760px]:mb-[26px]")}>Describe a moment and get a {s.clipCopy} video. Or use + to make an ad, a company short, or a market update.</p>}
                 </motion.div>
               )}
             </AnimatePresence>
             {hasThread && <ChatThread threadRef={s.threadRef} thread={s.thread} pendingOp={s.pendingOp} isEditing={s.isEditing} onRetry={s.retryThreadOp} onCancel={s.cancelEdit}
                 onStartNewVideo={s.startSuggestedVideo} onKeepEditing={() => s.promptInputRef.current?.focus()}
-                lead={researchSession && (
+                lead={marketRun ? (
+                  <MarketMessages run={marketRun} isGenerating={s.isGenerating} onRetryRender={s.retryMarketRender} onDismiss={s.dismissMarket} />
+                ) : researchSession && (
                   <ResearchMessages
                     session={researchSession}
                     readOnly={isEditorOpen}
@@ -137,7 +143,7 @@ export default function Home() {
                 <ul className="mt-1.5 pl-[19px] [&>li+li]:mt-1">{s.narrationMessages.map((message, index) => <li key={`${message}-${index}`}>{message}</li>)}</ul>
               </motion.section>
             )}
-            <p className={cn("mx-auto max-w-[600px] text-[11px] text-faint", hasThread ? "mt-2.5" : "mt-[17px]")}>{s.isAtEnd ? `The playhead is at the end of “${s.openTitle}”: describe what happens next and it becomes a new shot.` : s.isAutoMode ? `Auto: your prompt decides — edit ${s.editWindow ? formatWindow(s.editWindow) : "the selected moment"}, ask a question, extend (“make it 3 seconds longer”), cut (“remove this part”), or attach a clip to append. Press End to continue from the end.` : s.isAppendMode ? `Adds a new shot at the end of “${s.openTitle}”: attach a video or pick one from history to append it as-is, or describe the next shot to generate it. Esc or ✕ goes back to new videos.` : !s.isContinueMode && s.attachment ? "Your video becomes a new project you can edit moment by moment or extend with more shots. A prompt is optional." : s.isContinueMode ? `Your message applies to ${s.editWindow ? formatWindow(s.editWindow) : `${s.targetSec.toFixed(1)}s`} of “${s.openTitle}” (frame ${s.targetFrame + 1}) — drag on the timeline strip to choose exactly which part to change. Describe a change to regenerate it and re-render the${s.project ? ` ${s.project.durationSeconds}s` : ""} video, or ask a question about it. Pause or use “Grab this frame” to pick a moment; Esc or ✕ goes back to new videos.` : <>{s.mediaType === "rawtree" ? "Summarizes the latest competitor moves from RawTree into a short video. No prompt needed." : s.mediaType === "ad" ? `Writes a ${s.presetLength}-second multi-scene ad (16:9) from your product or offer, then opens it in the editor. Takes 1–3 minutes.` : s.mediaType === "company" ? `Writes a ${s.presetLength}-second brand video about your company, then opens it in the editor. Takes 1–3 minutes.` : s.mediaType === "storyboard" ? "Select a valid local storyboard JSON file before rendering. Narration warnings must be reviewed before the server will render." : `Every prompt becomes a ${s.clipCopy} video with sound. Use + for ads, company shorts, or competitor summaries — or attach, drop, or paste a video to start from your own footage.`} Your BFL key stays on the server.</>}</p>
+            <p className={cn("mx-auto max-w-[600px] text-[11px] text-faint", hasThread ? "mt-2.5" : "mt-[17px]")}>{s.isAtEnd ? `The playhead is at the end of “${s.openTitle}”: describe what happens next and it becomes a new shot.` : s.isAutoMode ? `Auto: your prompt decides — edit ${s.editWindow ? formatWindow(s.editWindow) : "the selected moment"}, ask a question, extend (“make it 3 seconds longer”), cut (“remove this part”), or attach a clip to append. Press End to continue from the end.` : s.isAppendMode ? `Adds a new shot at the end of “${s.openTitle}”: attach a video or pick one from history to append it as-is, or describe the next shot to generate it. Esc or ✕ goes back to new videos.` : !s.isContinueMode && s.attachment ? "Your video becomes a new project you can edit moment by moment or extend with more shots. A prompt is optional." : s.isContinueMode ? `Your message applies to ${s.editWindow ? formatWindow(s.editWindow) : `${s.targetSec.toFixed(1)}s`} of “${s.openTitle}” (frame ${s.targetFrame + 1}) — drag on the timeline strip to choose exactly which part to change. Describe a change to regenerate it and re-render the${s.project ? ` ${s.project.durationSeconds}s` : ""} video, or ask a question about it. Pause or use “Grab this frame” to pick a moment; Esc or ✕ goes back to new videos.` : <>{s.mediaType === "market" ? "Tell us what your company does: the agent finds your competitors, reads their recent news and pricing, and turns what changed into a short, sourced video." : s.mediaType === "ad" ? `Writes a ${s.presetLength}-second multi-scene ad (16:9) from your product or offer, then opens it in the editor. Takes 1–3 minutes.` : s.mediaType === "company" ? `Writes a ${s.presetLength}-second brand video about your company, then opens it in the editor. Takes 1–3 minutes.` : s.mediaType === "storyboard" ? "Select a valid local storyboard JSON file before rendering. Narration warnings must be reviewed before the server will render." : `Every prompt becomes a ${s.clipCopy} video with sound. Use + for ads, company shorts, or a market update — or attach, drop, or paste a video to start from your own footage.`} Your BFL key stays on the server.</>}</p>
           </div>
         </section>
         <LogDrawer />

@@ -50,11 +50,23 @@ def parse_ts(value):
     return dt.replace(tzinfo=timezone.utc)
 
 
+def _fold(row, prefix):
+    """{"structured.title": "x"} -> {"title": "x"}. Empty and null columns are dropped (RawTree fills missing keys)."""
+    return {k.split(".", 1)[1]: v for k, v in row.items() if k.startswith(prefix + ".") and v not in (None, "")}
+
+
 def row_to_envelope(row):
-    """RawTree flattens nested dicts (section_hashes.pricing); fold them back."""
+    """RawTree flattens nested dicts (section_hashes.pricing, structured.title); fold them back."""
     d = {k: v for k, v in row.items() if "." not in k and not k.startswith("_") and v is not None}
-    d["section_hashes"] = {k.split(".", 1)[1]: v for k, v in row.items()
-                           if k.startswith("section_hashes.") and v}
+    d["section_hashes"] = _fold(row, "section_hashes")
+    structured = d.get("structured")
+    if isinstance(structured, str):                        # a writer that sent structured as one JSON string
+        try:
+            structured = json.loads(structured)
+        except ValueError:
+            structured = None
+    structured = dict(structured if isinstance(structured, dict) else {}, **_fold(row, "structured"))
+    d["structured"] = structured or None
     d["fetched_at"] = parse_ts(row["fetched_at"])
     return EvidenceEnvelope(**d)
 

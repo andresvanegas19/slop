@@ -410,6 +410,18 @@ class HostNotAllowed(FetchError):
     """The URL, or a redirect hop, leaves the hosts the caller allows."""
 
 
+# What probing a site can normally run into (refused, DNS, timeout, robots.txt …); anything else is a bug to log.
+EXPECTED_FETCH_ERRORS = (FetchError, httpx.HTTPError, OSError)
+
+
+def fetch_error_reason(e: BaseException) -> str:
+    """A short reason for a failed fetch, safe to show the user (no headers or request bodies)."""
+    text = " ".join(str(e).split())
+    if isinstance(e, FetchError):
+        return text[:160] or "fetch failed"
+    return "{}: {}".format(type(e).__name__, text[:140]) if text else type(e).__name__
+
+
 class WebFetcher:
     """One per session. `client` is injectable (tests use httpx.MockTransport)."""
 

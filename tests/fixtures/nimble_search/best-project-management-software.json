@@ -1,0 +1,136 @@
+{
+ "request": {
+  "query": "best project management software",
+  "max_results": 10,
+  "focus": "general",
+  "search_depth": "lite",
+  "country": "US",
+  "locale": "en-US"
+ },
+ "response": {
+  "total_results": 10,
+  "results": [
+   {
+    "title": "10 Best Project Management Software Of 2026",
+    "description": "To find the best project management software, we evaluated 26 platforms and scored 61 metrics. Based on our data, we found the top 10 platforms and then performed hands-on testing before awarding ...",
+    "url": "https://www.forbes.com/advisor/business/software/best-project-management-software/",
+    "content": "",
+    "metadata": {
+     "position": 1,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "The Best Project Management Software for 2026 - PCMag",
+    "description": "Have a major deliverable coming up that involves lots of people and tasks? The top project management apps we've tested can help you keep your team on track.",
+    "url": "https://www.pcmag.com/picks/the-best-project-management-software",
+    "content": "",
+    "metadata": {
+     "position": 2,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "9 Best Project Management Software: My Top Picks for 2026",
+    "description": "I reviewed 25+ tools using G2 Data to find the best project management software for 2026. Here are my top 9 picks like Jira, Asana, ClickUp, and Monday.",
+    "url": "https://learn.g2.com/best-project-management-software",
+    "content": "",
+    "metadata": {
+     "position": 3,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Top 10 Project Management Software I Tested & Recommend for 2026",
+    "description": "I tested 10 tools to find the best project management software for different business needs so you can choose the right one with confidence.",
+    "url": "https://project-management.com/top-10-project-management-software/",
+    "content": "",
+    "metadata": {
+     "position": 4,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "10 Best Project Management Software Picked For 2026",
+    "description": "The best project management software helps you plan projects, track progress, manage budgets, and collaborate with your team all in one place. Without it, you're forced to rely on disconnected tools\u2014like spreadsheets, emails, or Slack threads\u2014which makes it harder to manage timelines, prevent scope creep, and keep your team aligned.",
+    "url": "https://thedigitalprojectmanager.com/tools/best-project-management-software/",
+    "content": "",
+    "metadata": {
+     "position": 5,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "10 Best Project Management Software In 2026 | +25 Apps Tested",
+    "description": "I spent +100 hours on personal testing and tried +25 apps to find the best project management softwares in 2026. Here, I show the top ones.",
+    "url": "https://thebusinessdive.com/best-project-management-software",
+    "content": "",
+    "metadata": {
+     "position": 6,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Best Project Management Software For 2026 (Top 15 Picks)",
+    "description": "Compare the 15 best project management software platforms for 2026. See features, pricing, AI capabilities, and which platform fits your team.",
+    "url": "https://monday.com/blog/project-management/project-management-software/",
+    "content": "",
+    "metadata": {
+     "position": 7,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Best Project Management Software for 2026: 15 Tools - Cloudwards",
+    "description": "In this article, we share 15 of the best project management software services. All of them can help improve productivity and consistency.",
+    "url": "https://www.cloudwards.net/best-project-management-software/",
+    "content": "",
+    "metadata": {
+     "position": 8,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Best project management tools and software: My 21 top picks for 2026",
+    "description": "I evaluated 21 project management tools and software to review their pricing, features, and team fit",
+    "url": "https://www.wrike.com/project-management-guide/faq/what-are-project-management-tools/",
+    "content": "",
+    "metadata": {
+     "position": 9,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Best Project Management Software and Tools of 2026 - Top10.com",
+    "description": "Want to know the best project management software? We compared and reviewed the best project management software and tools to help you make the right decision for your growing company. Start your project management software journey today.",
+    "url": "https://www.top10.com/project-management/comparison",
+    "content": "",
+    "metadata": {
+     "position": 10,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   }
+  ],
+  "request_id": "d28cbfb2-5c42-4bd9-9ab9-deccfa809177"
+ }
+}

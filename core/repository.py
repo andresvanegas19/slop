@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from contracts import Belief, BeliefStatus, OutboxEvent
+from contracts import Belief, BeliefStatus, EvidenceRef, OutboxEvent, VideoStoryboardRecord
 
 from .state_machine import Pending
 
@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS pending (entity_id TEXT, attribute TEXT, data TEXT NO
 CREATE TABLE IF NOT EXISTS readings (entity_id TEXT PRIMARY KEY, section_hash TEXT, facts TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS applied_patches (patch_id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, delivered_at TEXT, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS article_readings (entity_id TEXT, section_hash TEXT, developments TEXT NOT NULL, processed_at TEXT NOT NULL, PRIMARY KEY (entity_id, section_hash));
+CREATE TABLE IF NOT EXISTS evidence_refs (obs_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS video_storyboards (storyboard_id TEXT PRIMARY KEY, watch_id TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS video_storyboards_by_watch ON video_storyboards (watch_id, created_at);
 """
 
 
@@ -133,6 +137,42 @@ class StateRepository:
         self.db.execute("INSERT INTO readings VALUES (?, ?, ?) ON CONFLICT(entity_id) DO UPDATE SET "
                         "section_hash = excluded.section_hash, facts = excluded.facts",
                         (entity_id, section_hash, json.dumps(facts)))
+
+    # --- market path: processed articles, evidence refs, video storyboards ------
+    def article_reading(self, entity_id, section_hash) -> Optional[list]:
+        """Developments (JSON dicts) already extracted from this article content, or None if never processed."""
+        row = self.db.execute("SELECT developments FROM article_readings WHERE entity_id = ? AND section_hash = ?",
+                              (entity_id, section_hash)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_article_reading(self, entity_id, section_hash, developments: list):
+        self.db.execute("INSERT INTO article_readings VALUES (?, ?, ?, ?) ON CONFLICT(entity_id, section_hash) "
+                        "DO UPDATE SET developments = excluded.developments, processed_at = excluded.processed_at",
+                        (entity_id, section_hash, json.dumps(developments), datetime.now(timezone.utc).isoformat()))
+
+    def save_evidence_ref(self, ref: EvidenceRef):
+        self.db.execute("INSERT INTO evidence_refs VALUES (?, ?) ON CONFLICT(obs_id) DO UPDATE SET data = excluded.data",
+                        (ref.obs_id, ref.model_dump_json()))
+
+    def evidence_ref(self, obs_id) -> Optional[EvidenceRef]:
+        row = self.db.execute("SELECT data FROM evidence_refs WHERE obs_id = ?", (obs_id,)).fetchone()
+        return EvidenceRef.model_validate_json(row[0]) if row else None
+
+    def save_video_storyboard(self, record: VideoStoryboardRecord):
+        """Keyed by storyboard_id (a content hash): the same storyboard composed twice is stored once."""
+        self.db.execute("INSERT OR IGNORE INTO video_storyboards VALUES (?, ?, ?, ?)",
+                        (record.storyboard_id, record.watch_id, record.created_at.isoformat(),
+                         record.model_dump_json()))
+
+    def get_video_storyboard(self, storyboard_id) -> Optional[VideoStoryboardRecord]:
+        row = self.db.execute("SELECT data FROM video_storyboards WHERE storyboard_id = ?",
+                              (storyboard_id,)).fetchone()
+        return VideoStoryboardRecord.model_validate_json(row[0]) if row else None
+
+    def latest_video_storyboard(self, watch_id) -> Optional[VideoStoryboardRecord]:
+        row = self.db.execute("SELECT data FROM video_storyboards WHERE watch_id = ? "
+                              "ORDER BY created_at DESC, rowid DESC LIMIT 1", (watch_id,)).fetchone()
+        return VideoStoryboardRecord.model_validate_json(row[0]) if row else None
 
     # --- idempotency & outbox --------------------------------------------------
     def is_applied(self, patch_id) -> bool:

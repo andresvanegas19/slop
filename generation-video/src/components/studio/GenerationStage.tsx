@@ -8,11 +8,11 @@ import type { HistoryKind, LiveProgress } from "./types";
 import { CANCEL_BUTTON, cn, fade, fadeUp } from "./ui";
 
 export function generatingLabel(kind: HistoryKind) {
-  return kind === "rawtree" ? "Summarizing competitor moves" : kind === "storyboard" ? "Rendering your storyboard" : kind === "upload" ? "Importing your video" : kind === "ad" ? "Creating your ad" : kind === "company" ? "Creating your company short" : "Preparing your video";
+  return kind === "rawtree" ? "Summarizing competitor moves" : kind === "market" ? "Rendering your market update" : kind === "storyboard" ? "Rendering your storyboard" : kind === "upload" ? "Importing your video" : kind === "ad" ? "Creating your ad" : kind === "company" ? "Creating your company short" : "Preparing your video";
 }
 
 export function generatingDetail(kind: HistoryKind, clipCopy: string) {
-  return kind === "upload" ? "Preparing frames from your clip…" : kind === "rawtree" ? "Reading the latest competitor data from RawTree and rendering a short…" : kind === "storyboard" ? "Rendering scenes, motion, overlays, and narration…" : kind === "ad" ? "Writing your ad and rendering scenes… this takes 1–3 minutes." : kind === "company" ? "Writing your story and rendering scenes… this takes 1–3 minutes." : `Generating a ${clipCopy} clip with sound…`;
+  return kind === "upload" ? "Preparing frames from your clip…" : kind === "rawtree" ? "Reading the latest competitor data from RawTree and rendering a short…" : kind === "market" ? "Filming each development as a cinematic shot… this takes a few minutes." : kind === "storyboard" ? "Rendering scenes, motion, overlays, and narration…" : kind === "ad" ? "Writing your ad and rendering scenes… this takes 1–3 minutes." : kind === "company" ? "Writing your story and rendering scenes… this takes 1–3 minutes." : `Generating a ${clipCopy} clip with sound…`;
 }
 
 /** Step labels from the server may already end in an ellipsis; strip it so we never render "……". */

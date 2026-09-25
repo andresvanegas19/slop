@@ -16,9 +16,11 @@ Nothing is written to RawTree without --publish / publish. Keys come from the re
 """
 import argparse
 import json
+import logging
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from core.logs import setup_logging
 
@@ -76,6 +78,14 @@ def build(args):
     story = StoryService(settings, research, llm_factory=research_llm, detect_llm_factory=detect_llm)
     worker = AgentWorker(settings, agent, store, coordinator, rawtree, publish=publish, research=research,
                          story=story)
+    try:
+        from .market import MarketManager
+        from .market_pipeline import build_pipeline
+        worker.market = MarketManager(build_pipeline(settings, rawtree if publish else None, publish,
+                                                     worker.loop_lock),
+                                      sessions_dir=Path(settings.agent_db).parent / "runs" / "market_sessions")
+    except (ImportError, SystemExit) as e:   # e.g. no NIMBLE_API_KEY: the rest of the agent still works
+        logging.getLogger("agent").warning("market updates disabled: %s", e)
     return settings, store, agent, worker
 
 

@@ -8,3 +8,8 @@ from .state import Belief, BeliefStatus, OpType, Patch, PatchDecision, PatchOp, 
 from .research import (CompanyProfile, Finding, FollowUpQuestion, NewsItem, PageVisit, ResearchEventRow,
                        ResearchIntent, ResearchSessionState, ResearchStats, ResearchStatus, SourcedText, VideoBrief,
                        VisualIdentity)
+from .market import (CompanyBrief, CompetitorCandidate, DevelopmentKind, MarketDevelopment, MarketEvent,
+                     MarketSessionView, MarketStatus, MarketWatch,
+                     slugify)
+from .video import (EvidenceRef, VideoMotion, VideoOnScreenText, VideoScene, VideoStoryboard, VideoStoryboardRecord,
+                    VideoStyle, VideoTiming, VideoTransition)

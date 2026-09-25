@@ -1,0 +1,136 @@
+{
+ "request": {
+  "query": "Asana vs",
+  "max_results": 10,
+  "focus": "general",
+  "search_depth": "lite",
+  "country": "US",
+  "locale": "en-US"
+ },
+ "response": {
+  "total_results": 10,
+  "results": [
+   {
+    "title": "Asana Vs Monday: I Personally Tested Both (2026)",
+    "description": "In this Asana vs Monday.com article, I compare these project management apps based on my experience, features, pricing, and pros and cons.",
+    "url": "https://thebusinessdive.com/asana-vs-monday",
+    "content": "",
+    "metadata": {
+     "position": 1,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana Vs. Trello - Forbes Advisor",
+    "description": "In this Asana vs. Trello comparison, you'll learn about key features, ease of use and pricing so that you can make a more informed purchasing decision.",
+    "url": "https://www.forbes.com/advisor/business/software/asana-vs-trello/",
+    "content": "",
+    "metadata": {
+     "position": 2,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "I Tested Asana vs. Jira: Which Is Better in 2026? - G2",
+    "description": "I tested Asana vs. Jira to see which project management tool is the best in 2026. Here's my take on their pros, cons, and recommendations by team type.",
+    "url": "https://learn.g2.com/asana-vs-jira",
+    "content": "",
+    "metadata": {
+     "position": 3,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana Vs. Trello: Comparison & Expert Reviews For 2026",
+    "description": "Compare Asana and Trello to find the right tool for your team. Compare features, pros + cons, pricing, and more in my complete guide.",
+    "url": "https://thedigitalprojectmanager.com/tools/asana-vs-trello/",
+    "content": "",
+    "metadata": {
+     "position": 4,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana vs. Wrike: Comparison & Expert Reviews For 2026",
+    "description": "Asana vs. Wrike: An Overview Asana Asana is a cloud-based project management platform that helps teams manage their work through tasks, timelines, boards, and workflow automation.",
+    "url": "https://thedigitalprojectmanager.com/tools/asana-vs-wrike/",
+    "content": "",
+    "metadata": {
+     "position": 5,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana vs. monday: I Built Projects and Picked a Side in 2026",
+    "description": "I compared Asana vs. monday Work Management to find the best project management software. After thorough testing, we have a clear winner in 2026.",
+    "url": "https://learn.g2.com/asana-vs-monday",
+    "content": "",
+    "metadata": {
+     "position": 6,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana vs Monday.com 2026: 31% Price Gap and 22% Speed Divide [Tested]",
+    "description": "Asana vs Monday.com 2026 comparison with pricing, benchmarks, AI features, and real-world tests. Monday.com is 31% cheaper but Asana leads in AI and free plan.",
+    "url": "https://tech-insider.org/asana-vs-monday-2026/",
+    "content": "",
+    "metadata": {
+     "position": 7,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana vs. Trello: Differences, Pros and Cons in 2024 - USA TODAY",
+    "description": "Asana vs. Trello: Quick overview In the following table, we compare both services, providing an overall impression of what each option offers, their similarities and where they differ.",
+    "url": "https://www.usatoday.com/money/blueprint/business/project-management/asana-vs-trello/",
+    "content": "",
+    "metadata": {
+     "position": 8,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana vs monday.com: Which Is Better for Project Management in 2026?",
+    "description": "Compare Asana vs monday.com across pricing, AI, collaboration, and workflows to find the best choice for your project management needs.",
+    "url": "https://technologyadvice.com/blog/project-management/asana-vs-monday/",
+    "content": "",
+    "metadata": {
+     "position": 9,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana Vs Notion: Avoid paying an extra $300 (2026)",
+    "description": "In this Asana vs Notion article, I will share my experience with these project management tools and how to avoid paying $300 extra.",
+    "url": "https://thebusinessdive.com/asana-vs-notion",
+    "content": "",
+    "metadata": {
+     "position": 10,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   }
+  ],
+  "request_id": "25abe768-e983-458c-b02c-27af10b50967"
+ }
+}

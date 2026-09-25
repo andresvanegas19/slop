@@ -1,0 +1,100 @@
+{
+ "request": {
+  "query": "best CRM for small sales teams",
+  "max_results": 10
+ },
+ "response": {
+  "results": [
+   {
+    "title": "20 Best CRM for Sales Teams 2026: Ranked by Sales Fit",
+    "url": "https://saascrmreview.com/best-crm-for-sales-teams/",
+    "description": "What is the best sales CRM for a small team? Pipedrive for pipeline-first selling, Less Annoying CRM for the simplest possible setup, Zoho CRM for the most capability per seat.",
+    "metadata": {
+     "position": 1,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "The 14 Best CRMs for Sales Teams (2026) - breakcold.com",
+    "url": "https://www.breakcold.com/blog/crm-for-sales-teams",
+    "description": "Best CRMs for sales teams in 2026: Breakcold leads with AI agents, multichannel inbox (LinkedIn, WhatsApp), and $99/mo flat pricing. 14 real picks.",
+    "metadata": {
+     "position": 2,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Best Small Business CRM Software for Sales Teams",
+    "url": "https://sellingsignals.com/best-crm-software/",
+    "description": "Compare the best small business CRM software for salespeople and teams. See pricing, features, pros, cons, and top picks that scale as you grow.",
+    "metadata": {
+     "position": 3,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "5 best CRMs for small teams (and how to choose the right one)",
+    "url": "https://www.insightly.com/blog/top-crms-for-small-teams/",
+    "description": "We compared the best CRM for small teams teams for 2026 to help you make the right choice. Read this thorough comparison to make an informed decision!",
+    "metadata": {
+     "position": 4,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "14 Best CRM for Small Businesses [2026 Ranked] | Agiled",
+    "url": "https://agiled.app/blog/best-crm-for-small-businesses",
+    "description": "Compare 14 small business CRMs by price, ease of use, integrations, and scale path. Find the platform that fits a 1-person shop or a 50-person team.",
+    "metadata": {
+     "position": 5,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Best CRM for Small Sales Teams (Under 25 Reps) - talkroute.com",
+    "url": "https://talkroute.com/best-crm-for-small-sales-teams-under-25-reps/",
+    "description": "Discover top CRM options tailored for small sales teams. Streamline management with these user-friendly tools designed for growth.",
+    "metadata": {
+     "position": 6,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Best Sales CRM Software 2026: 10 CRMs Ranked for Sales Teams",
+    "url": "https://pipelinecrm.com/blog/best-sales-crm-software/",
+    "description": "The 10 best sales CRMs of 2026 A ranked guide to the sales CRM platforms small and mid-sized sales teams actually use, evaluated on sales-specific features, G2 support ratings, pricing transparency, and fit for 5 to 50 reps.",
+    "metadata": {
+     "position": 7,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Best CRM for Small Sales Teams (Under 10 Members)",
+    "url": "https://www.interakt.shop/sales-crm/best-small-teams-crm/",
+    "description": "For this reason, choosing the right CRM is essential for small teams to effectively perform and improve sales. In this article, we will help you find the best sales CRM tools that are tailored well to enable smaller teams to sell smarter.",
+    "metadata": {
+     "position": 8,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Best CRM for small teams: practical picks for 2026",
+    "url": "https://capsulecrm.com/blog/best-crm-for-small-teams/",
+    "description": "Compare the best CRM tools for small teams in 2026, with practical picks for sales, support, automation, pricing, and easy setup.",
+    "metadata": {
+     "position": 9,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "17 Best CRM for Small Business (2026): Pros, Cons, Costs & More",
+    "url": "https://www.onepagecrm.com/blog/best-crm-for-small-business/",
+    "description": "Agile CRM is Best for: Small teams needing marketing, sales, and support in one place. Agile CRM is one of the most feature-rich CRMs for small and medium-sized businesses with limited budgets.",
+    "metadata": {
+     "position": 10,
+     "entity_type": "OrganicResult"
+    }
+   }
+  ]
+ }
+}

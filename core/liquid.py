@@ -1,4 +1,7 @@
-"""The only place that talks to Liquid. Liquid extracts facts and writes copy; it never decides state (DECISIONS D2)."""
+"""The only place that talks to Liquid. Liquid extracts facts and writes copy; it never decides state (DECISIONS D2).
+
+Pricing pages: `extract_pricing`, `write_copy`. News/changelog articles: `extract_developments`, `write_market_copy`.
+"""
 import hashlib
 import json
 import logging
@@ -73,6 +76,75 @@ def facts_from_plans(plans) -> Facts:
     return facts
 
 
+# --- market path: developments from news/changelog articles ------------------------------------------------------
+
+ARTICLE_CHARS = 6000
+DEVELOPMENT_KINDS = "launch|pricing|partnership|funding|acquisition|hiring|leadership|other"
+
+DEVELOPMENTS_PROMPT = """You read one web article about {entity}. {entity} is a competitor of {company}{category}.
+List at most 3 concrete, recent developments ABOUT {entity} that the article itself reports.
+Ignore other companies, ads, navigation, related-article links and old background.
+Return ONLY JSON, no commentary:
+{{"developments": [{{"entity": "<the company this development is about>", "kind": "<one of {kinds}>", "headline": "<max 120 characters, factual, no hype, starts with {entity}>", "summary": "<one or two plain sentences>", "quote": "<one full sentence copied EXACTLY, character for character, from the article, that proves the development>", "published_at": "<YYYY-MM-DD if the article states its date, else null>", "significance": <0.0 to 1.0, where 1 is a major market move and 0.2 is minor news>}}]}}
+If the article reports nothing concrete about {entity}, return {{"developments": []}}.
+
+Article title: {title}
+URL: {url}
+Article:
+{content}
+"""
+
+MARKET_COPY_PROMPT = """You write the voiceover for a short market-update video made for {company}.
+Rephrase ONLY the facts below. Do not add any number, name, date, product or claim that is not in them.
+Return ONLY JSON, no commentary:
+{{"lines": {{"<fact id>": "<one plain spoken sentence, at most {line_words} words, that names the company it is about>"}}, "implication": "<one sentence, at most {implication_words} words: what these moves mean for {company}, using only these facts>"}}
+Facts:
+{facts}
+"""
+
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_BOILERPLATE = re.compile(r"\b(cookie|cookies|subscribe|sign in|sign up|log in|newsletter|privacy policy|terms of "
+                          r"service|all rights reserved|advertisement|skip to|share this|follow us)\b", re.I)
+
+
+def strip_links(text):
+    return _LINK.sub(r"\1", _IMAGE.sub(" ", text or ""))
+
+
+def article_window(markdown, entity_name="", max_chars=ARTICLE_CHARS):
+    """The part of an article worth a model call: navigation, link lists and boilerplate lines dropped.
+
+    Only whole lines are dropped and link syntax is reduced to its text, so a sentence Liquid copies from the
+    window is still a (markup-insensitive) substring of the original markdown.
+    """
+    keep = []
+    for line in (markdown or "").splitlines():
+        t = line.strip()
+        if not t:
+            if keep and keep[-1]:
+                keep.append("")
+            continue
+        plain = strip_links(t).strip(" *-+|")
+        words = plain.split()
+        if not words:
+            continue                                       # image-only or link-only markup
+        if _LINK.fullmatch(t.lstrip("*-+ ").strip()) and len(words) < 12:
+            continue                                       # a line that is just one link: navigation
+        if len(words) <= 3 and not t.startswith("#") and not re.search(r"\d", t):
+            continue                                       # "Menu", "Share", "Home"
+        if _BOILERPLATE.search(plain) and len(words) < 15:
+            continue
+        keep.append(strip_links(t))
+    text = "\n".join(keep).strip()
+    start = 0
+    if entity_name:
+        i = text.lower().find(entity_name.lower())
+        if i > max_chars // 2:
+            start = max(0, i - 1000)                       # the article body starts well after the header junk
+    return text[start:start + max_chars]
+
+
 class LiquidAdapter:
     def __init__(self, api_key, model=DEFAULT_MODEL):
         self.key, self.model = api_key, model
@@ -112,4 +184,37 @@ class LiquidAdapter:
 
     def write_copy(self, change: str, run_id: str) -> Tuple[Optional[dict], ModelCallRecord]:
         text, record = self._call(COPY_PROMPT.format(change=change), run_id, "storyboard", 1500)
+        return parse_json(text), record
+
+    def extract_developments(self, env: EvidenceEnvelope, company, entity_name: str, run_id: str):
+        """Liquid proposes 0-3 developments about `entity_name` from one article.
+
+        Returns raw dicts: core.market grounds them (quote verbatim, right entity) before anything is kept."""
+        title = ((env.structured or {}).get("title") or "") if isinstance(env.structured, dict) else ""
+        category = " ({})".format(company.category) if getattr(company, "category", "") else ""
+        prompt = DEVELOPMENTS_PROMPT.format(entity=entity_name, company=company.name, category=category,
+                                            kinds=DEVELOPMENT_KINDS, title=title or "-", url=env.url,
+                                            content=article_window(env.markdown or "", entity_name))
+        text, record = self._call(prompt, run_id, "extract_developments", 4000)
+        parsed = parse_json(text)
+        if parsed is None and record.ok:
+            # LFM sometimes spends the whole budget reasoning or drops the JSON: one retry, then give up.
+            text, retry = self._call(prompt, run_id, "extract_developments", 4000)
+            parsed = parse_json(text)
+            record = retry.model_copy(update={
+                "input_tokens": record.input_tokens + retry.input_tokens,
+                "output_tokens": record.output_tokens + retry.output_tokens,
+                "reasoning_tokens": record.reasoning_tokens + retry.reasoning_tokens,
+                "latency_ms": record.latency_ms + retry.latency_ms})
+        got = (parsed or {}).get("developments")
+        return [d for d in got if isinstance(d, dict)] if isinstance(got, list) else [], record
+
+    def write_market_copy(self, payload: dict, run_id: str):
+        """Liquid rephrases the storyboard's facts. core.video_storyboard checks it added nothing before using it."""
+        facts = "\n".join("- {id}: {entity} ({kind}): {headline}. {summary}".format(**f)
+                          for f in payload.get("developments", []))
+        prompt = MARKET_COPY_PROMPT.format(company=payload.get("company", "the company"), facts=facts,
+                                           line_words=payload.get("line_words", 14),
+                                           implication_words=payload.get("implication_words", 16))
+        text, record = self._call(prompt, run_id, "storyboard", 3000)
         return parse_json(text), record

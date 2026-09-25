@@ -1,0 +1,136 @@
+{
+ "request": {
+  "query": "Asana competitors",
+  "max_results": 10,
+  "focus": "general",
+  "search_depth": "lite",
+  "country": "US",
+  "locale": "en-US"
+ },
+ "response": {
+  "total_results": 10,
+  "results": [
+   {
+    "title": "Best Asana Alternatives - Forbes Advisor",
+    "description": "In this roundup, I'll share five Asana alternatives to help you manage projects, improve team collaboration and increase productivity.",
+    "url": "https://www.forbes.com/advisor/business/software/best-asana-alternatives/",
+    "content": "",
+    "metadata": {
+     "position": 1,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "16 Best Asana Alternatives of 2026 (Free - ProjectManager",
+    "description": "Not sure about Asana? View our list of the best Asana alternatives for managing tasks, projects and teams in 2026 and beyond.",
+    "url": "https://www.projectmanager.com/blog/asana-alternatives",
+    "content": "",
+    "metadata": {
+     "position": 2,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "10 Best Asana Alternatives Reviewed for 2026 - The Digital Project Manager",
+    "description": "Discover the best alternatives to Asana to find the right tool for your team. Compare features, pros and cons, pricing, and more in my complete guide.",
+    "url": "https://thedigitalprojectmanager.com/tools/asana-alternative/",
+    "content": "",
+    "metadata": {
+     "position": 3,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Top 10 Asana Alternatives & Competitors in 2026 | G2",
+    "description": "The best Asana alternatives are ClickUp, Teamwork.com, and monday AI Work Platform. Find top-ranking free & paid apps similar to Asana for your Project Collaboration Software needs. Read the latest reviews, pricing details, and features.",
+    "url": "https://www.g2.com/products/asana/competitors/alternatives",
+    "content": "",
+    "metadata": {
+     "position": 4,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "8 Best Asana Alternatives Ranked for 2026 - TechRepublic",
+    "description": "Not sold on Asana? I compared the best Asana alternatives in 2026 to help you find a tool that fits your team and your budget.",
+    "url": "https://www.techrepublic.com/article/asana-alternatives/",
+    "content": "",
+    "metadata": {
+     "position": 5,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "6 Best Asana Alternatives in 2026 | 20+ Personally Tested Apps",
+    "description": "Asana is a popular project management tool, but there are some reasons many users have started looking for alternatives due to concerns around its pricing model and customer support. So, I decided to collect the best Asana alternatives in 2026 to help you find the one that fits you. These are my top picks after trying over 20 project manager tools to handle my workflows:",
+    "url": "https://thebusinessdive.com/asana-alternatives",
+    "content": "",
+    "metadata": {
+     "position": 6,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "10 Best Asana Alternatives Reviewed in 2026 - thectoclub.com",
+    "description": "Discover the top Asana alternatives and find the best option for your team. Compare features, pros and cons, prices, and more in my complete guide.",
+    "url": "https://thectoclub.com/tools/best-asana-alternative/",
+    "content": "",
+    "metadata": {
+     "position": 7,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "The 18 best Asana alternatives and competitors in 2026",
+    "description": "Looking for the best Asana alternatives in 2026? Explore top competitors, key features, and pricing.",
+    "url": "https://www.airtable.com/articles/asana-alternatives",
+    "content": "",
+    "metadata": {
+     "position": 8,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "18 Best Asana Alternatives for Teams in 2026 - ProofHub",
+    "description": "Find the best Asana alternatives for any team based on unique needs. See how different tools simplify project management and improve collaboration.",
+    "url": "https://www.proofhub.com/articles/asana-alternatives",
+    "content": "",
+    "metadata": {
+     "position": 9,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Best Asana alternatives in 2026 tested (features & price compared)",
+    "description": "Here you'll find best free and paid Asana alternatives we tested to help teams choose the right project management software.",
+    "url": "https://www.goodday.work/blog/best-asana-alternatives/",
+    "content": "",
+    "metadata": {
+     "position": 10,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   }
+  ],
+  "request_id": "9d796a21-4a2e-46e3-a2ed-27f96066e87f"
+ }
+}

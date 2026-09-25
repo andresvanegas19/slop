@@ -18,6 +18,7 @@ import { useVideoAttachment } from "./useVideoAttachment";
 import { presetDuration, researchCompanyFor } from "../research-detect";
 import type { Storyline } from "@/lib/storyline";
 import { getActiveResearchId, setActiveResearch, startResearchSession, useActiveResearch, useResearch, type ResearchTarget } from "./useResearch";
+import { startMarketSession, useMarket } from "./useMarket";
 
 export function useStudio() {
   const [prompt, setPrompt] = useState("");
@@ -121,6 +122,10 @@ export function useStudio() {
     ? openItem?.researchSessionId ? { id: openItem.researchSessionId, prompt: openItem.title, company: "", durationSec: openItem.generatedSeconds ?? openItem.durationSeconds } : null
     : homeResearch;
   const research = useResearch(researchTarget);
+  // Market update: the agent finds competitors and stores a storyboard; once it's ready we render it (user's own submit).
+  const market = useMarket((id, storyboardId) => void renderMarket(id, storyboardId));
+  const marketRun = market.run;
+  const isMarketRunning = marketRun !== null && marketRun.pollError === null && marketRun.view?.status !== "ready" && marketRun.view?.status !== "error";
   const duration = videoDuration > 0 ? videoDuration : project?.durationSeconds ?? 0;
   const lastFrame = project?.frames[project.frames.length - 1];
   const timelineTotal = Math.max(duration, lastFrame ? lastFrame.startSec + lastFrame.durationSec : 0, 0.001);
@@ -163,11 +168,12 @@ export function useStudio() {
 
   // New research questions / answers also scroll the conversation.
   const researchMessages = research.session ? research.session.questions.length + research.session.questions.filter((question) => question.answered).length + (research.session.competitors ? 1 : 0) + (research.session.storylineWriting ? 1 : 0) + (research.session.storyline?.version ?? 0) : 0;
+  const marketProgress = marketRun ? `${marketRun.view?.status}:${marketRun.view?.competitors.length}:${marketRun.view?.developments.length}:${marketRun.render.status}` : "";
   const threadLength = isContinueMode && project ? Object.values(project.chats ?? {}).reduce((total, list) => total + (Array.isArray(list) ? list.length : 0), 0) + localThread.length : 0;
   useEffect(() => {
     const container = threadRef.current;
     if (container) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-  }, [threadLength, pendingOp, researchMessages]);
+  }, [threadLength, pendingOp, researchMessages, marketProgress]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -220,7 +226,7 @@ export function useStudio() {
     ? Boolean(project) && !isEditing && Boolean(prompt.trim())
     : attachmentReady
     ? !isGenerating && !isStartingResearch
-    : !isGenerating && !isStartingResearch && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "rawtree" ? true : mediaType === "stories" ? Boolean(prompt.trim()) && !stories.isBusy : Boolean(prompt.trim()));
+    : !isGenerating && !isStartingResearch && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "rawtree" ? true : mediaType === "market" ? !isMarketRunning && Boolean(prompt.trim()) : mediaType === "stories" ? Boolean(prompt.trim()) && !stories.isBusy : Boolean(prompt.trim()));
   const latestClip = history.find((item) => item.kind === "clip");
   // Length of a freshly generated quick clip (edits/cuts change durationSeconds, so prefer the original length).
   const clipSeconds = latestClip ? latestClip.generatedSeconds ?? latestClip.durationSeconds : null;
@@ -403,6 +409,10 @@ export function useStudio() {
       await beginResearch(promptText, researchCompany, lengthSec);
       return;
     }
+    if (kind === "market") {
+      await beginMarket(promptText);
+      return;
+    }
     await runGeneration(kind, promptText, lengthSec);
   }
 
@@ -424,6 +434,32 @@ export function useStudio() {
     }
   }
 
+  async function beginMarket(promptText: string) {
+    setIsStartingResearch(true);
+    setError(null);
+    setNotice(null);
+    setNarrationMessages([]);
+    setIsMediaMenuOpen(false);
+    try {
+      const id = await startMarketSession(promptText);
+      market.begin(id, promptText);
+      setPrompt("");
+    } catch (caughtError) {
+      console.error("[market] could not start the market update", caughtError);
+      setError(caughtError instanceof Error ? caughtError.message : "Could not start the market update.");
+    } finally {
+      setIsStartingResearch(false);
+    }
+  }
+
+  /** Renders the storyboard the agent stored for market session `id` (called once it's ready, or on Retry). */
+  async function renderMarket(id: string, storyboardId: string) {
+    market.setRender(id, { status: "rendering" });
+    const outcome = await runGeneration("market", marketRun?.prompt ?? "", 0, undefined, undefined, undefined, storyboardId);
+    if (outcome.ok) market.dismiss();
+    else market.setRender(id, { status: "error", error: outcome.error });
+  }
+
   /** "Create video now": the agent writes a storyline from the request + research (shown for review, not rendered yet). */
   function createVideoFromResearch(template?: string) {
     const session = research.session;
@@ -440,8 +476,8 @@ export function useStudio() {
     await runGeneration(storyline.template === "company" ? "company" : "ad", session.prompt, storyline.duration_sec, session.id, undefined, storyline);
   }
 
-  async function runGeneration(kind: HistoryKind, promptText: string, lengthSec: number, researchSessionId?: string, attach?: string, storyline?: Storyline) {
-    const failureLabel = kind === "rawtree" ? "The competitor summary failed." : kind === "storyboard" ? "Storyboard rendering failed." : kind === "ad" ? "The ad could not be created." : kind === "company" ? "The company short could not be created." : "Video generation failed.";
+  async function runGeneration(kind: HistoryKind, promptText: string, lengthSec: number, researchSessionId?: string, attach?: string, storyline?: Storyline, storyboardId?: string): Promise<{ ok: boolean; error?: string }> {
+    const failureLabel = kind === "market" ? "The market update video could not be rendered." : kind === "rawtree" ? "The competitor summary failed." : kind === "storyboard" ? "Storyboard rendering failed." : kind === "ad" ? "The ad could not be created." : kind === "company" ? "The company short could not be created." : "Video generation failed.";
     const controller = generationAbort.begin();
     setIsGenerating(true);
     setGeneratingKind(kind);
@@ -451,8 +487,9 @@ export function useStudio() {
     setNotice(null);
     setNarrationMessages([]);
     try {
-      const endpoint = kind === "rawtree" ? "/api/slop-video" : kind === "storyboard" ? "/api/render-storyboard" : kind === "ad" || kind === "company" ? "/api/generate-preset" : "/api/generate-video";
-      const requestBody = kind === "rawtree" ? {}
+      const endpoint = kind === "market" ? "/api/market-video" : kind === "rawtree" ? "/api/slop-video" : kind === "storyboard" ? "/api/render-storyboard" : kind === "ad" || kind === "company" ? "/api/generate-preset" : "/api/generate-video";
+      const requestBody = kind === "market" ? { storyboard_id: storyboardId }
+        : kind === "rawtree" ? {}
         : kind === "storyboard" ? storyboard
         : kind === "ad" ? { preset: storyline?.template ?? "ad", prompt: promptText, durationSec: lengthSec, aspect: "16:9", ...(researchSessionId ? { researchSessionId } : {}), ...(storyline ? { storyline } : {}) }
         : kind === "company" ? { preset: "company", prompt: promptText, durationSec: lengthSec, ...(researchSessionId ? { researchSessionId } : {}), ...(storyline ? { storyline } : {}) }
@@ -475,7 +512,7 @@ export function useStudio() {
       if (typeof result.videoUrl !== "string") throw new Error("The generation did not return a video.");
 
       const durationSeconds = typeof result.durationSeconds === "number" ? result.durationSeconds : isProject(result.project) ? result.project.durationSeconds : 0;
-      if ((kind === "storyboard" || kind === "ad" || kind === "company") && result.narrationAvailable === false) {
+      if ((kind === "storyboard" || kind === "ad" || kind === "company" || kind === "market") && result.narrationAvailable === false) {
         setNarrationMessages(["Narration could not be generated on this system; the video was rendered without it."]);
       }
       if (!isProject(result.project)) {
@@ -497,17 +534,21 @@ export function useStudio() {
       updateHistory((items) => [item, ...items.filter((existing) => existing.projectId !== item.projectId)]);
       // The research now lives with the video (reopening it shows the session); leave the home screen's copy.
       if (researchSessionId && getActiveResearchId() === researchSessionId) setActiveResearch(null);
-      if (kind === "ad" || kind === "company") {
-        if (!researchSessionId && !attach) setPrompt("");
+      if (kind === "ad" || kind === "company" || kind === "market") {
+        if (!researchSessionId && !attach && kind !== "market") setPrompt("");
         void openProject(item);
       }
+      return { ok: true };
     } catch (caughtError) {
       if (controller.signal.aborted || isAbortError(caughtError)) {
         setNotice("Generation cancelled");
-        return;
+        return { ok: false, error: "Rendering was cancelled." };
       }
       console.error("[generate] generation failed", caughtError);
-      setError(caughtError instanceof Error ? caughtError.message : failureLabel);
+      const message = caughtError instanceof Error ? caughtError.message : failureLabel;
+      // Market failures are shown on the market card (with Retry) instead of under the composer.
+      if (kind !== "market") setError(message);
+      return { ok: false, error: message };
     } finally {
       generationAbort.release(controller);
       setIsGenerating(false);
@@ -1497,6 +1538,8 @@ export function useStudio() {
     prompt, setPrompt, isGenerating, generatingKind, generationLive, generatingPrompt, isStartingResearch,
     interruptedJobs, resumeInterruptedJob, dismissInterruptedJob, startSuggestedVideo,
     research, createVideoFromResearch, approveStoryline, dismissResearch: () => setActiveResearch(null), error, notice, narrationMessages,
+    marketRun, isMarketRunning, dismissMarket: market.dismiss,
+    retryMarketRender: () => { if (marketRun?.view?.storyboard_id && !isGenerating) void renderMarket(marketRun.id, marketRun.view.storyboard_id); },
     mediaType, isMediaMenuOpen, setIsMediaMenuOpen, selectMediaType, storyboardFileName, storyboardError, selectStoryboard,
     presetLength, setPresetLength, clipCopy, canSubmit, submitComposer, promptInputRef,
     stories, storyCount, setStoryCount, storyLength, setStoryLength,

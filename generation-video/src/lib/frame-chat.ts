@@ -9,6 +9,7 @@ import {
 } from "@/lib/openrouter";
 import { normalizeFrameEdit, type FrameEdit } from "@/lib/project-edit";
 import { frameFilePath, type Project } from "@/lib/projects";
+import { logException, logWarn } from "@/lib/runtime-log";
 
 const MAX_HISTORY_MESSAGES = 12;
 const MAX_REPLY_LENGTH = 2_000;
@@ -151,9 +152,14 @@ export async function decideFrameChat(
   let imageUrl: string | undefined;
   if (withImage) {
     try {
-      imageUrl = `data:image/png;base64,${(await readFile(options.referenceImagePath ?? frameFilePath(frame.imageUrl))).toString("base64")}`;
-    } catch {
-      imageUrl = undefined; // Missing frame file: fall back to the text description.
+      const imagePath = options.referenceImagePath ?? frameFilePath(frame.imageUrl);
+      // Frames are runtime output, not deploy-time assets: an untraced read keeps Turbopack from bundling the project.
+      imageUrl = `data:image/png;base64,${(await readFile(/* turbopackIgnore: true */ imagePath)).toString("base64")}`;
+    } catch (error) {
+      // Fall back to the text description, but leave a trace: a missing file is expected, anything else is a bug.
+      const details = { frame: index, reference: Boolean(options.referenceImagePath) };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") logWarn("frame_chat_image_missing", details);
+      else logException("frame_chat_image_failed", error, details);
     }
   }
 

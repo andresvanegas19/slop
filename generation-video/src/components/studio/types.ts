@@ -1,9 +1,10 @@
 /* Shared studio types (moved verbatim from app/page.tsx). */
 import type { Storyline } from "@/lib/storyline";
 
-export type MediaType = "storyboard" | "rawtree" | "ad" | "company" | "stories";
+export type MediaType = "storyboard" | "rawtree" | "market" | "ad" | "company" | "stories";
 export type PresetType = "ad" | "company";
-export type HistoryKind = "clip" | "storyboard" | "rawtree" | "upload" | "ad" | "company";
+/** "rawtree" = legacy competitor summaries (kept so old history items still render); new ones are "market". */
+export type HistoryKind = "clip" | "storyboard" | "rawtree" | "market" | "upload" | "ad" | "company";
 
 export type ProjectFrame = { index: number; imageUrl: string; prompt: string; startSec: number; durationSec: number; narration?: string; headline?: string; sub?: string; segmentUrl?: string; source?: "generated" | "upload"; edits?: FrameEdit[] };
 export type FrameEdit = { atSec: number; windowSec?: number; rangeStartSec?: number; rangeEndSec?: number; prompt: string; at: string };
@@ -80,4 +81,31 @@ export type ResearchSession = {
   /** The latest storyline (validated with parseStoryline) and whether the agent is writing one. */
   storyline?: Storyline | null;
   storylineWriting?: boolean;
+};
+
+/* ---- Market updates (/api/market, contracts/market.py MarketSessionView) ---- */
+export type MarketStatus = "starting" | "discovering" | "collecting" | "analyzing" | "storyboarding" | "ready" | "error";
+export type MarketCompetitor = { entity_id: string; name: string; domain?: string | null; reason?: string };
+export type MarketDevelopment = { development_id: string; entity_name: string; kind: string; headline: string; summary?: string; url: string; source_name?: string; significance: number };
+export type MarketView = {
+  session_id: string;
+  status: MarketStatus;
+  message: string;
+  company: { name: string; domain?: string | null; category?: string } | null;
+  competitors: MarketCompetitor[];
+  pages_fetched: number;
+  developments: MarketDevelopment[];
+  storyboard_id: string | null;
+  error: string | null;
+  events: { at: string; stage: MarketStatus; message: string }[];
+};
+/** The home screen's market-update run: the agent session, then the render of its stored storyboard. */
+export type MarketRun = {
+  id: string;
+  prompt: string;
+  startedAt: string;
+  view: MarketView | null;
+  /** Polling problem (agent unreachable, session lost). Polling stops when set. */
+  pollError: string | null;
+  render: { status: "idle" | "rendering" | "done" | "error"; error?: string };
 };

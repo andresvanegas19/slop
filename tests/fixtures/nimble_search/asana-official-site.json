@@ -1,0 +1,76 @@
+{
+ "request": {
+  "query": "Asana official site",
+  "max_results": 5,
+  "focus": "general",
+  "search_depth": "lite",
+  "country": "US",
+  "locale": "en-US"
+ },
+ "response": {
+  "total_results": 5,
+  "results": [
+   {
+    "title": "Work & Project Management for Human-Agent Teams \u2022 Asana",
+    "description": "Work management software for teams and AI agents. Plan, automate, and execute critical workflows together.",
+    "url": "https://asana.com/",
+    "content": "",
+    "metadata": {
+     "position": 1,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana Work Management - Features, Uses & Product \u2022 Asana",
+    "description": "What is Asana? Read about features, how to use it, and signing up for an account. Asana has business features for your projects, workflows, goals, and team!",
+    "url": "https://asana.com/product",
+    "content": "",
+    "metadata": {
+     "position": 2,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana - Log In",
+    "description": "To use Asana in Internet Explorer, you need to install the Google Chrome Frame browser plugin.",
+    "url": "https://app.asana.com/",
+    "content": "",
+    "metadata": {
+     "position": 3,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "About Asana \u2022 Asana \u2022 Asana",
+    "description": "Asana is on a mission to help humanity thrive by enabling the world's teams to work together effortlessly. Learn more about our company and culture.",
+    "url": "https://asana.com/company",
+    "content": "",
+    "metadata": {
+     "position": 4,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Download the Asana App for Mobile and Desktop \u2022 Asana",
+    "description": "Download the Asana desktop or mobile app with support for Windows, Mac, iPhone, iPad, or Android devices.",
+    "url": "https://asana.com/download",
+    "content": "",
+    "metadata": {
+     "position": 5,
+     "entity_type": "OrganicResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   }
+  ],
+  "request_id": "c78dcfe7-5825-4680-80b8-0957e374142c"
+ }
+}

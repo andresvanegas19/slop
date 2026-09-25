@@ -15,4 +15,7 @@ TABLES = {
     "research": TABLE_PREFIX + "_research_events",            # ResearchEventRow rows from agent/research.py
     "video": TABLE_PREFIX + "_video_events",                  # video versions published by the web app (read-only here)
     "user_prompts": TABLE_PREFIX + "_user_prompts",           # user prompts logged by the web app (read-only here)
+    "market_watch": TABLE_PREFIX + "_market_watches",         # MarketWatch rows (A: company + discovered competitors)
+    "development": TABLE_PREFIX + "_market_developments",     # MarketDevelopment rows (B: grounded market events)
+    "video_storyboard": TABLE_PREFIX + "_video_storyboards",  # VideoStoryboardRecord rows (B -> C: what the video renders)
 }
