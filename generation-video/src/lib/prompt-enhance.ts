@@ -96,14 +96,30 @@ export function dropUnrequestedStyle(prompt: string, ownText: string): string | 
   const kept = sentences.filter((sentence) => styleTermsIn(sentence).every((term) => allowed.has(term)));
   if (kept.length === sentences.length) return prompt;
   const text = kept.join(" ").replace(/\s+/g, " ").trim();
-  return text.length >= MIN_LENGTH ? text : undefined;
+  // The "No on-screen text" boilerplate alone isn't a prompt: require real descriptive content to survive.
+  return contentWords(text) >= MIN_CONTENT_WORDS ? text : undefined;
+}
+
+const MIN_CONTENT_WORDS = 8;
+const NO_TEXT_SENTENCE = /\bno\s+(?:on-screen\s+)?(?:text|letters?|lettering|captions?|logos?)\b[^.!?]*[.!?]*/gi;
+
+function contentWords(text: string) {
+  return text.replace(NO_TEXT_SENTENCE, " ").split(/\s+/).filter((word) => /[a-z0-9]/i.test(word)).length;
+}
+
+/** Placeholder prompts ("From: <title>", "Uploaded video: <file>") say nothing about what the frame looks like. */
+function isPlaceholderPrompt(prompt: string) {
+  return /^(?:from|uploaded video):/i.test(prompt.trim());
 }
 
 function fallbackPrompt(currentPrompt: string, instruction: string, draft?: string, guidance?: string) {
   const usableDraft = draft?.trim() && draft.trim() !== currentPrompt.trim() && !copiesGuidance(draft, guidance, `${currentPrompt}\n${instruction}`);
   const draftWithoutStyle = usableDraft ? dropUnrequestedStyle(draft!.trim(), `${currentPrompt}\n${instruction}`) : undefined;
   if (draftWithoutStyle) return draftWithoutStyle.slice(0, MAX_LENGTH);
-  return `${currentPrompt.replace(/[.\s]*$/, ".")} ${instruction.replace(/[.\s]*$/, ".")}`.slice(0, MAX_LENGTH);
+  // Deterministic edit instruction: the BFL edit uses the frame as its reference image, so say what to keep.
+  const keep = "Keep the same subject, composition, camera angle, lighting and visual style as the reference image.";
+  const base = isPlaceholderPrompt(currentPrompt) ? "" : `${currentPrompt.replace(/[.\s]*$/, ".")} `;
+  return `${base}${instruction.replace(/[.\s]*$/, ".")} ${keep}`.slice(0, MAX_LENGTH);
 }
 
 /**

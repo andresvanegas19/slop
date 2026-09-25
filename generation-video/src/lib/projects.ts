@@ -16,8 +16,8 @@ export type ProjectFrame = {
   seed?: number;
   /** Clip projects: this frame's own video segment (/api/videos/…); the project video is the concat of all segments. */
   segmentUrl?: string;
-  /** Clip projects: whether the segment was generated (FLUX) or uploaded by the user. */
-  source?: "generated" | "upload";
+  /** Clip projects: whether the segment was generated (FLUX), uploaded by the user, or copied from another project's video. */
+  source?: "generated" | "upload" | "project";
   /** Clip projects: "Edit moment" edits spliced into this segment (project-time window), for timeline markers. */
   edits?: FrameMomentEdit[];
 };

@@ -236,10 +236,18 @@ export const FLUX3_MIN_DURATION_SEC = 5;
  * Submits a FLUX 3 video job (`t2v`, or `i2v` with `keyframes`) and returns the short-lived signed MP4 URL.
  * Uses draft mode (fast HD preview) at the minimum duration to keep generation time low.
  */
+/**
+ * FLUX 3 keyframes: one image (start), two images (start + end, interpolated), or up to 10 `[seconds, image]` pins.
+ * Images are URLs or base64. Passed through as-is.
+ */
+export type Flux3Keyframe = string | [number, string];
+
 export async function generateBflVideo(input: {
   prompt: string;
-  keyframes?: string[];
+  keyframes?: Flux3Keyframe[];
   generateAudio?: boolean;
+  /** Whole seconds, 5–20 (default FLUX3_MIN_DURATION_SEC). */
+  durationSec?: number;
 }) {
   const submissionResponse = await request(videoEndpoint(), {
     method: "POST",
@@ -248,7 +256,7 @@ export async function generateBflVideo(input: {
       mode: input.keyframes?.length ? "i2v" : "t2v",
       prompt: input.prompt,
       ...(input.keyframes?.length ? { keyframes: input.keyframes } : {}),
-      duration: FLUX3_MIN_DURATION_SEC,
+      duration: input.durationSec ?? FLUX3_MIN_DURATION_SEC,
       aspect_ratio: "16:9",
       resolution: "hd",
       draft: true,

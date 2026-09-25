@@ -11,11 +11,12 @@ type ProjectFrame = { index: number; imageUrl: string; prompt: string; startSec:
 type FrameEdit = { atSec: number; windowSec?: number; rangeStartSec?: number; rangeEndSec?: number; prompt: string; at: string };
 type RangeDrag = { mode: "new" | "start" | "end" | "move"; startX: number; anchorSec: number; original: TimeWindow | null; moved: boolean; pointerId: number };
 type TimeWindow = { startSec: number; endSec: number };
-type ChatMessage = { role: "user" | "assistant"; text: string; at: string; edited?: boolean };
+type ChatMessage = { role: "user" | "assistant"; text: string; at: string; edited?: boolean; atSec?: number; rangeStartSec?: number; rangeEndSec?: number; grabbedFrameUrl?: string; enhancedPrompt?: string; ragSources?: unknown };
+type ThreadEntry = { id: string; role: "user" | "assistant"; text: string; at: string; context?: string; thumbUrl?: string; edited?: boolean; note?: string; beforeUrl?: string; afterUrl?: string; enhancedPrompt?: string; ragSources?: string[] };
+type PendingOp = { user: ThreadEntry; detail: string; error: string | null };
 type Project = { id: string; kind: "clip" | "storyboard"; title: string; createdAt: string; updatedAt: string; videoUrl: string; durationSeconds: number; frames: ProjectFrame[]; chats: Record<string, ChatMessage[]> };
 
-type HistoryItem = { projectId: string; title: string; videoUrl: string; thumbUrl: string; durationSeconds: number; createdAt: string; kind: HistoryKind };
-type FrameReply = { atSec: number; label: string; text: string; edited: boolean; enhancedPrompt?: string; grabbedFrameUrl?: string };
+type HistoryItem = { projectId: string; title: string; videoUrl: string; thumbUrl: string; durationSeconds: number; createdAt: string; kind: HistoryKind; generatedSeconds?: number };
 type Upload = { id: string; videoUrl: string; thumbUrl: string; durationSeconds: number; width: number; height: number; hasAudio: boolean; filename: string };
 type Attachment = { key: number; file: File; previewUrl: string; progress: number; status: "uploading" | "done" | "error"; localDuration?: number; upload?: Upload; error?: string };
 type ContinueAction = "edit" | "append";
@@ -325,6 +326,85 @@ function captureVideoThumb(video: HTMLVideoElement): string | null {
   }
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+/** Normalizes `ragSources` (strings or {title|name|source|id} objects) into short labels. */
+function ragLabels(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const labels = value.flatMap((item) => {
+    if (typeof item === "string") return [item];
+    if (item && typeof item === "object") {
+      const record = item as Record<string, unknown>;
+      const label = record.title ?? record.name ?? record.source ?? record.id;
+      return typeof label === "string" ? [label] : [];
+    }
+    return [];
+  });
+  return labels.length > 0 ? labels : undefined;
+}
+
+const THREAD_KEY_PREFIX = "longform.thread.";
+
+function loadLocalThread(projectId: string): ThreadEntry[] {
+  try {
+    const raw = window.localStorage.getItem(THREAD_KEY_PREFIX + projectId);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is ThreadEntry => Boolean(entry) && typeof (entry as ThreadEntry).text === "string" && typeof (entry as ThreadEntry).at === "string") : [];
+  } catch (caughtError) {
+    console.error("[thread] could not read the local thread", caughtError);
+    return [];
+  }
+}
+
+function saveLocalThread(projectId: string, entries: ThreadEntry[]) {
+  try {
+    window.localStorage.setItem(THREAD_KEY_PREFIX + projectId, JSON.stringify(entries.slice(-200)));
+  } catch (caughtError) {
+    console.error("[thread] could not save the local thread", caughtError);
+  }
+}
+
+/** Flattens the project's saved per-frame chats into thread entries. */
+function threadFromProject(project: Project): ThreadEntry[] {
+  const entries: ThreadEntry[] = [];
+  for (const [key, messages] of Object.entries(project.chats ?? {})) {
+    if (!Array.isArray(messages)) continue;
+    const frameIndex = Number(key);
+    const frame = project.frames.find((candidate) => candidate.index === frameIndex);
+    let lastUserGrab: string | undefined;
+    messages.forEach((message, index) => {
+      const range = typeof message.rangeStartSec === "number" && typeof message.rangeEndSec === "number" ? { startSec: message.rangeStartSec, endSec: message.rangeEndSec } : null;
+      if (message.role === "user") {
+        lastUserGrab = message.grabbedFrameUrl;
+        const where = range ? formatWindow(range) : typeof message.atSec === "number" ? `${message.atSec.toFixed(1)}s` : null;
+        entries.push({ id: `srv-${key}-${index}`, role: "user", text: message.text, at: message.at, context: [where, `shot ${frameIndex + 1}`].filter(Boolean).join(" · "), thumbUrl: message.grabbedFrameUrl });
+      } else {
+        entries.push({
+          id: `srv-${key}-${index}`,
+          role: "assistant",
+          text: message.text,
+          at: message.at,
+          edited: message.edited,
+          note: message.edited ? "Frame updated · video re-rendered" : undefined,
+          beforeUrl: message.edited ? message.grabbedFrameUrl ?? lastUserGrab : undefined,
+          afterUrl: message.edited ? frame?.imageUrl : undefined,
+          enhancedPrompt: message.enhancedPrompt,
+          ragSources: ragLabels(message.ragSources),
+        });
+      }
+    });
+  }
+  return entries;
+}
+
+function mergeThread(...lists: ThreadEntry[][]) {
+  return lists.flat().map((entry, order) => ({ entry, order, time: Date.parse(entry.at) || 0 }))
+    .sort((a, b) => a.time - b.time || a.order - b.order)
+    .map(({ entry }) => entry);
+}
+
 function isAbortError(caughtError: unknown) {
   return caughtError instanceof DOMException && caughtError.name === "AbortError";
 }
@@ -359,6 +439,11 @@ export default function Home() {
   const [editingAt, setEditingAt] = useState<number | null>(null);
   const [busy, setBusy] = useState<BusyState | null>(null);
   const [range, setRangeState] = useState<TimeWindow | null>(null);
+  const [confirmCut, setConfirmCut] = useState(false);
+  const [confirmRemoveFrame, setConfirmRemoveFrame] = useState<number | null>(null);
+  const [sourceProject, setSourceProject] = useState<HistoryItem | null>(null);
+  const [isHistoryPickerOpen, setIsHistoryPickerOpen] = useState(false);
+  const confirmTimerRef = useRef<number | null>(null);
   const [rangeLimit, setRangeLimit] = useState<string | null>(null);
   const rangeRef = useRef<TimeWindow | null>(null);
   const rangeDragRef = useRef<RangeDrag | null>(null);
@@ -374,7 +459,11 @@ export default function Home() {
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
-  const [frameReply, setFrameReply] = useState<FrameReply | null>(null);
+  const [localThread, setLocalThread] = useState<ThreadEntry[]>([]);
+  const [pendingOp, setPendingOp] = useState<PendingOp | null>(null);
+  const retryRef = useRef<(() => void) | null>(null);
+  const threadIdRef = useRef(0);
+  const threadRef = useRef<HTMLDivElement>(null);
   const [editedNote, setEditedNote] = useState<string | null>(null);
   const [presetLength, setPresetLength] = useState(10);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -412,8 +501,9 @@ export default function Home() {
       setOpenProjectId(null);
       setProject(null);
       setProjectError(null);
-      setFrameReply(null);
       setGrab(null);
+      setLocalThread([]);
+      setPendingOp(null);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -427,6 +517,12 @@ export default function Home() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isGenerating, isEditorOpen]);
+
+  const threadLength = isContinueMode && project ? Object.values(project.chats ?? {}).reduce((total, list) => total + (Array.isArray(list) ? list.length : 0), 0) + localThread.length : 0;
+  useEffect(() => {
+    const container = threadRef.current;
+    if (container) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+  }, [threadLength, pendingOp]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -472,14 +568,16 @@ export default function Home() {
   const canSubmit = attachmentBlocking
     ? false
     : isAppendMode
-    ? Boolean(project) && !isEditing && !isStoryboardProject && (attachmentReady || Boolean(prompt.trim()))
+    ? Boolean(project) && !isEditing && !isStoryboardProject && (Boolean(sourceProject) || attachmentReady || Boolean(prompt.trim()))
     : isContinueMode
     ? Boolean(project) && !isEditing && Boolean(prompt.trim())
     : attachmentReady
     ? !isGenerating
     : !isGenerating && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "rawtree" ? true : Boolean(prompt.trim()));
   const latestClip = history.find((item) => item.kind === "clip");
-  const clipCopy = latestClip ? `${latestClip.durationSeconds}-second` : "short";
+  // Length of a freshly generated quick clip (edits/cuts change durationSeconds, so prefer the original length).
+  const clipSeconds = latestClip ? latestClip.generatedSeconds ?? latestClip.durationSeconds : null;
+  const clipCopy = clipSeconds ? `${clipSeconds}-second` : "short";
 
   function submitComposer(event: FormEvent<HTMLFormElement>) {
     if (isAppendMode) return appendShot(event);
@@ -515,6 +613,8 @@ export default function Home() {
       return;
     }
     clearAttachment();
+    setSourceProject(null);
+    setIsHistoryPickerOpen(false);
     if (isContinueMode) setContinueAction("append");
     else setMediaType(null);
     setIsMediaMenuOpen(false);
@@ -615,6 +715,10 @@ export default function Home() {
   function selectContinueAction(next: ContinueAction) {
     if (next === "append" && isStoryboardProject) return;
     if (next === "edit" && attachment) clearAttachment();
+    if (next === "edit") {
+      setSourceProject(null);
+      setIsHistoryPickerOpen(false);
+    }
     setContinueAction(next);
     setError(null);
   }
@@ -719,6 +823,7 @@ export default function Home() {
         durationSeconds,
         createdAt: created.createdAt || new Date().toISOString(),
         kind,
+        generatedSeconds: durationSeconds,
       };
       updateHistory((items) => [item, ...items.filter((existing) => existing.projectId !== item.projectId)]);
       if (kind === "ad" || kind === "company") {
@@ -744,7 +849,6 @@ export default function Home() {
     setIsPlaying(false);
     setGrab(null);
     setRange(null);
-    setFrameReply(null);
     setEditedNote(null);
     seekOnLoadRef.current = null;
   }
@@ -777,6 +881,12 @@ export default function Home() {
     setProjectError(null);
     resetPlayer();
     setContinueAction(attachment ? "append" : "edit");
+    setLocalThread(loadLocalThread(item.projectId));
+    setPendingOp(null);
+    retryRef.current = null;
+    setSourceProject(null);
+    setIsHistoryPickerOpen(false);
+    disarmConfirm();
     setIsMediaMenuOpen(false);
     setError(null);
     try {
@@ -795,6 +905,12 @@ export default function Home() {
   }
 
   function closeEditor() {
+    setLocalThread([]);
+    setPendingOp(null);
+    retryRef.current = null;
+    setSourceProject(null);
+    setIsHistoryPickerOpen(false);
+    disarmConfirm();
     openRequestRef.current += 1;
     openProjectIdRef.current = null;
     setOpenProjectId(null);
@@ -815,8 +931,7 @@ export default function Home() {
 
     // The grab itself never waits for the thumbnail; the frame image is the fallback.
     setGrab({ key, atSec, thumbUrl: frameImage, captured: false });
-    const currentRange = rangeRef.current;
-    if (!currentRange || atSec < currentRange.startSec - 1e-3 || atSec > currentRange.endSec + 1e-3) setRange(defaultRange(project.frames, atSec));
+    if (!rangeRef.current) setRange(defaultRange(project.frames, atSec));
     const immediate = captureVideoThumb(video);
     if (immediate) {
       setThumb(immediate);
@@ -918,6 +1033,8 @@ export default function Home() {
     rangeDragRef.current = null;
     isScrubbingRef.current = false;
     if (drag.mode === "new" && !drag.moved) {
+      // A simple click grabs a new moment (with a fresh default range around it).
+      if (isContinueMode && !isAppendMode) setRange(null);
       seekTo(secondsFromPointer(event.clientX), true);
       return;
     }
@@ -933,6 +1050,11 @@ export default function Home() {
 
   function onPlayerKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if ((event.key === "Delete" || event.key === "Backspace") && event.target === timelineRef.current && range && !isAppendMode) {
+      event.preventDefault();
+      requestCutRange();
+      return;
+    }
     if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && (event.shiftKey || event.altKey) && project && editWindow) {
       event.preventDefault();
       pauseQuietly();
@@ -953,27 +1075,68 @@ export default function Home() {
     }
   }
 
-  /* ---- Continue editing ---- */
+  /* ---- Continue editing: every message becomes a chat thread entry ---- */
 
-  async function askFrame(event: FormEvent<HTMLFormElement>) {
+  function nextThreadId(prefix: string) {
+    threadIdRef.current += 1;
+    return `${prefix}-${threadIdRef.current}`;
+  }
+
+  function addLocalThread(projectId: string, entries: ThreadEntry[]) {
+    const next = [...loadLocalThread(projectId), ...entries];
+    saveLocalThread(projectId, next);
+    if (openProjectIdRef.current === projectId) setLocalThread(next);
+  }
+
+  function startThreadOp(user: ThreadEntry, detail: string, retry: () => void) {
+    retryRef.current = retry;
+    setPendingOp({ user, detail, error: null });
+  }
+
+  function failThreadOp(message: string) {
+    setPendingOp((current) => current ? { ...current, error: message } : current);
+  }
+
+  function retryThreadOp() {
+    const retry = retryRef.current;
+    if (!retry || isEditing) return;
+    retry();
+  }
+
+  function askFrame(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = prompt.trim();
     if (!project || !message || isEditing) return;
-
-    const projectId = project.id;
     const requestedWindow = range ?? defaultRange(project.frames, grab?.atSec ?? videoRef.current?.currentTime ?? currentTime);
     const momentSec = grab?.atSec ?? (range ? (range.startSec + range.endSec) / 2 : videoRef.current?.currentTime ?? currentTime);
-    const atSec = Math.round(momentSec * 1000) / 1000;
     const frameIndex = frameIndexAt(project.frames, requestedWindow.startSec);
+    setPrompt("");
+    void runAsk({
+      projectId: project.id,
+      frameIndex,
+      message,
+      atSec: Math.round(momentSec * 1000) / 1000,
+      window: requestedWindow,
+      thumbUrl: grab?.thumbUrl ?? project.frames.find((frame) => frame.index === frameIndex)?.imageUrl,
+    });
+  }
+
+  async function runAsk(params: { projectId: string; frameIndex: number; message: string; atSec: number; window: TimeWindow; thumbUrl?: string | null }) {
+    const { projectId, frameIndex, message, atSec, window: requestedWindow } = params;
     pauseQuietly();
     const controller = new AbortController();
     editAbortRef.current = controller;
+    const detail = `Regenerating ${formatWindow(requestedWindow)}…`;
+    startThreadOp(
+      { id: nextThreadId("pending"), role: "user", text: message, at: nowIso(), context: `${formatWindow(requestedWindow)} · shot ${frameIndex + 1}`, thumbUrl: params.thumbUrl ?? undefined },
+      detail,
+      () => void runAsk(params),
+    );
     setEditingAt(atSec);
     setRange(requestedWindow);
-    setBusy({ label: "Updating your video", detail: `Regenerating ${formatWindow(requestedWindow)}…` });
+    setBusy({ label: "Updating your video", detail });
     setError(null);
     setNotice(null);
-    setFrameReply(null);
     setEditedNote(null);
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/frames/${frameIndex}/ask`, {
@@ -1000,13 +1163,11 @@ export default function Home() {
         } : item));
       }
       if (openProjectIdRef.current !== projectId) return;
+      // The server saved both messages in project.chats; the thread renders from there.
       setProject(updated);
-      setPrompt("");
-      const reply = typeof result.reply === "string" ? result.reply.trim() : "";
-      const enhancedPrompt = typeof result.enhancedPrompt === "string" && result.enhancedPrompt.trim() ? result.enhancedPrompt.trim() : undefined;
-      const grabbedFrameUrl = typeof result.grabbedFrameUrl === "string" && result.grabbedFrameUrl ? result.grabbedFrameUrl : undefined;
+      setPendingOp(null);
+      retryRef.current = null;
       const editedWindow = isTimeWindow(result.window) ? result.window : requestedWindow;
-      if (reply || enhancedPrompt || edited) setFrameReply({ atSec, label: edited ? `Updated ${formatWindow(editedWindow)} · video re-rendered` : `At ${atSec.toFixed(1)}s`, text: reply, edited, enhancedPrompt, grabbedFrameUrl });
       if (edited) {
         setEditedNote("Frame updated · video re-rendered");
         setIsPlaying(false);
@@ -1020,12 +1181,13 @@ export default function Home() {
       }
     } catch (caughtError) {
       if (controller.signal.aborted || isAbortError(caughtError)) {
+        setPendingOp(null);
         setNotice("Edit cancelled");
         return;
       }
       console.error("[editor] frame ask failed", caughtError);
       if (openProjectIdRef.current !== projectId) return;
-      setError(caughtError instanceof Error ? caughtError.message : "The frame assistant could not answer.");
+      failThreadOp(caughtError instanceof Error ? caughtError.message : "The frame assistant could not answer.");
     } finally {
       if (editAbortRef.current === controller) editAbortRef.current = null;
       setEditingAt(null);
@@ -1033,27 +1195,54 @@ export default function Home() {
     }
   }
 
-  async function appendShot(event: FormEvent<HTMLFormElement>) {
+  function appendShot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!project || !canSubmit) return;
     const promptText = prompt.trim();
     const upload = attachment?.status === "done" ? attachment.upload : undefined;
-    if (!promptText && !upload) return;
+    const source = sourceProject;
+    if (!promptText && !upload && !source) return;
+    setPrompt("");
+    clearAttachment();
+    setSourceProject(null);
+    setIsHistoryPickerOpen(false);
+    void runAppend({
+      projectId: project.id,
+      prompt: source ? undefined : promptText || undefined,
+      uploadId: source ? undefined : upload?.id,
+      uploadName: upload?.filename,
+      uploadThumb: upload?.thumbUrl,
+      source: source ? { projectId: source.projectId, title: source.title, thumbUrl: source.thumbUrl } : undefined,
+    });
+  }
 
-    const projectId = project.id;
+  async function runAppend(params: { projectId: string; prompt?: string; uploadId?: string; uploadName?: string; uploadThumb?: string; source?: { projectId: string; title: string; thumbUrl: string } }) {
+    const { projectId, source } = params;
     pauseQuietly();
     const controller = new AbortController();
     editAbortRef.current = controller;
-    setEditingAt(project.durationSeconds);
-    setBusy({ label: "Appending to your video", detail: upload ? "Adding your clip…" : "Generating the next shot…" });
+    const detail = source ? `Adding “${source.title}”…` : params.uploadId ? "Adding your clip…" : "Generating the next shot…";
+    const userEntry: ThreadEntry = {
+      id: nextThreadId("user"),
+      role: "user",
+      text: source ? `Append “${source.title}”` : params.prompt ?? `Append ${params.uploadName ?? "my clip"}`,
+      at: nowIso(),
+      context: source ? "Append shot · from history" : params.uploadId ? `Append shot · ${params.uploadName ?? "uploaded clip"}` : "Append shot",
+      thumbUrl: source?.thumbUrl || params.uploadThumb,
+    };
+    startThreadOp(userEntry, detail, () => void runAppend(params));
+    setEditingAt(project?.durationSeconds ?? 0);
+    setBusy({ label: "Appending to your video", detail });
     setError(null);
     setNotice(null);
-    setFrameReply(null);
     setEditedNote(null);
     try {
-      const body: { uploadId?: string; prompt?: string } = {};
-      if (upload) body.uploadId = upload.id;
-      if (promptText) body.prompt = promptText;
+      const body: { uploadId?: string; prompt?: string; sourceProjectId?: string } = {};
+      if (source) body.sourceProjectId = source.projectId;
+      else {
+        if (params.uploadId) body.uploadId = params.uploadId;
+        if (params.prompt) body.prompt = params.prompt;
+      }
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/append`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1074,21 +1263,28 @@ export default function Home() {
         thumbUrl: updated.frames[0]?.imageUrl ?? item.thumbUrl,
         durationSeconds: updated.durationSeconds || item.durationSeconds,
       } : item));
-      if (openProjectIdRef.current !== projectId) return;
       const appendedIndex = typeof result.appendedFrameIndex === "number" ? result.appendedFrameIndex : updated.frames.length - 1;
       const appended = updated.frames.find((frame) => frame.index === appendedIndex) ?? updated.frames[updated.frames.length - 1];
       const startSec = appended?.startSec ?? 0;
-      setProject(updated);
-      setPrompt("");
-      clearAttachment();
       const enhancedPrompt = typeof result.enhancedPrompt === "string" && result.enhancedPrompt.trim() ? result.enhancedPrompt.trim() : undefined;
-      setFrameReply({
-        atSec: startSec,
-        label: `Shot ${(appended?.index ?? appendedIndex) + 1} appended at ${startSec.toFixed(1)}s · video re-rendered`,
-        text: appended?.source === "upload" ? "Your clip was added to the end of the video." : "",
-        edited: true,
-        enhancedPrompt,
-      });
+      addLocalThread(projectId, [
+        { ...userEntry, id: nextThreadId("local") },
+        {
+          id: nextThreadId("local"),
+          role: "assistant",
+          text: source ? `“${source.title}” was added to the end of the video.` : appended?.source === "upload" ? "Your clip was added to the end of the video." : "I generated the next shot and added it to the end.",
+          at: nowIso(),
+          edited: true,
+          note: `Shot ${(appended?.index ?? appendedIndex) + 1} appended at ${startSec.toFixed(1)}s · video re-rendered`,
+          afterUrl: appended?.imageUrl,
+          enhancedPrompt,
+          ragSources: ragLabels(result.ragSources),
+        },
+      ]);
+      if (openProjectIdRef.current !== projectId) return;
+      setPendingOp(null);
+      retryRef.current = null;
+      setProject(updated);
       setEditedNote("Shot appended · video re-rendered");
       setGrab({ key: ++grabKeyRef.current, atSec: startSec, thumbUrl: appended?.imageUrl ?? null, captured: false });
       setIsPlaying(false);
@@ -1098,17 +1294,210 @@ export default function Home() {
       setVideoReload((current) => current + 1);
     } catch (caughtError) {
       if (controller.signal.aborted || isAbortError(caughtError)) {
+        setPendingOp(null);
         setNotice("Append cancelled");
         return;
       }
       console.error("[editor] append failed", caughtError);
       if (openProjectIdRef.current !== projectId) return;
-      setError(caughtError instanceof Error ? caughtError.message : "Could not append the shot.");
+      failThreadOp(caughtError instanceof Error ? caughtError.message : "Could not append the shot.");
     } finally {
       if (editAbortRef.current === controller) editAbortRef.current = null;
       setEditingAt(null);
       setBusy(null);
     }
+  }
+
+  function armConfirm(kind: "cut" | number) {
+    if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
+    if (kind === "cut") {
+      setConfirmCut(true);
+      setConfirmRemoveFrame(null);
+    } else {
+      setConfirmRemoveFrame(kind);
+      setConfirmCut(false);
+    }
+    confirmTimerRef.current = window.setTimeout(() => {
+      setConfirmCut(false);
+      setConfirmRemoveFrame(null);
+    }, 3000);
+  }
+
+  function disarmConfirm() {
+    if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
+    setConfirmCut(false);
+    setConfirmRemoveFrame(null);
+  }
+
+  type MutateOptions = { projectId: string; url: string; method: "POST" | "DELETE"; body?: unknown; busy: BusyState; note: string; seekSec: number; failure: string; cancelled: string; userText: string; context: string; thumbUrl?: string };
+
+  /** Runs a structural edit (cut a range / remove a shot) that returns the updated project. */
+  async function mutateProject(options: MutateOptions) {
+    const { projectId } = options;
+    pauseQuietly();
+    disarmConfirm();
+    const controller = new AbortController();
+    editAbortRef.current = controller;
+    const userEntry: ThreadEntry = { id: nextThreadId("user"), role: "user", text: options.userText, at: nowIso(), context: options.context, thumbUrl: options.thumbUrl };
+    startThreadOp(userEntry, options.busy.detail, () => void mutateProject(options));
+    setEditingAt(options.seekSec);
+    setBusy(options.busy);
+    setError(null);
+    setNotice(null);
+    setEditedNote(null);
+    try {
+      const response = await fetch(options.url, {
+        method: options.method,
+        headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
+      });
+      const result = await readJson<{ project?: unknown; removed?: unknown; error?: unknown }>(response, `${options.failure} (HTTP ${response.status}). The server endpoint isn't ready yet.`);
+      if (!response.ok) {
+        console.error(`[editor] ${options.method} ${options.url} failed with HTTP ${response.status}`, result);
+        throw new Error(errorMessage(result, `${options.failure} (HTTP ${response.status}).`));
+      }
+      if (!isProject(result.project)) throw new Error("The server did not return the updated project.");
+      const updated = result.project;
+      updateHistory((items) => items.map((item) => item.projectId === projectId ? {
+        ...item,
+        videoUrl: updated.videoUrl || item.videoUrl,
+        thumbUrl: updated.frames[0]?.imageUrl ?? item.thumbUrl,
+        durationSeconds: updated.durationSeconds,
+      } : item));
+      const removedSec = typeof result.removed === "number" ? result.removed : null;
+      addLocalThread(projectId, [
+        { ...userEntry, id: nextThreadId("local") },
+        { id: nextThreadId("local"), role: "assistant", text: `Done — the video is now ${updated.durationSeconds.toFixed(1)}s long${removedSec !== null ? ` (${removedSec.toFixed(1)}s removed)` : ""}.`, at: nowIso(), edited: true, note: options.note },
+      ]);
+      if (openProjectIdRef.current !== projectId) return;
+      setPendingOp(null);
+      retryRef.current = null;
+      const seekSec = Math.min(options.seekSec, Math.max(0, updated.durationSeconds - 0.05));
+      setProject(updated);
+      setRange(null);
+      setGrab(null);
+      setEditedNote(options.note);
+      setIsPlaying(false);
+      setVideoDuration(0);
+      seekOnLoadRef.current = seekSec;
+      setCurrentTime(seekSec);
+      setVideoReload((current) => current + 1);
+    } catch (caughtError) {
+      if (controller.signal.aborted || isAbortError(caughtError)) {
+        setPendingOp(null);
+        setNotice(options.cancelled);
+        return;
+      }
+      console.error("[editor] structural edit failed", caughtError);
+      if (openProjectIdRef.current !== projectId) return;
+      failThreadOp(caughtError instanceof Error ? caughtError.message : options.failure);
+    } finally {
+      if (editAbortRef.current === controller) editAbortRef.current = null;
+      setEditingAt(null);
+      setBusy(null);
+    }
+  }
+
+  function requestCutRange() {
+    if (!project || !range || isStoryboardProject || isEditing) return;
+    if (!confirmCut) {
+      armConfirm("cut");
+      return;
+    }
+    const cut = range;
+    const length = (cut.endSec - cut.startSec).toFixed(1);
+    void mutateProject({
+      projectId: project.id,
+      url: `/api/projects/${encodeURIComponent(project.id)}/cut`,
+      method: "POST",
+      body: { rangeStartSec: Math.round(cut.startSec * 1000) / 1000, rangeEndSec: Math.round(cut.endSec * 1000) / 1000 },
+      busy: { label: "Removing part of your video", detail: `Removing ${formatWindow(cut)}…` },
+      note: `Removed ${formatWindow(cut)} · video re-rendered`,
+      seekSec: cut.startSec,
+      failure: "Could not remove that range",
+      cancelled: "Remove cancelled",
+      userText: `Remove ${formatWindow(cut)}`,
+      context: `Removed ${length}s`,
+      thumbUrl: grab?.thumbUrl ?? undefined,
+    });
+  }
+
+  function requestRemoveFrame(frame: ProjectFrame) {
+    if (!project || project.frames.length < 2 || isStoryboardProject || isEditing) return;
+    if (confirmRemoveFrame !== frame.index) {
+      armConfirm(frame.index);
+      return;
+    }
+    const span = formatWindow({ startSec: frame.startSec, endSec: frame.startSec + frame.durationSec });
+    void mutateProject({
+      projectId: project.id,
+      url: `/api/projects/${encodeURIComponent(project.id)}/frames/${frame.index}`,
+      method: "DELETE",
+      busy: { label: "Removing a shot", detail: `Removing shot ${frame.index + 1} (${span})…` },
+      note: `Shot ${frame.index + 1} removed · video re-rendered`,
+      seekSec: frame.startSec,
+      failure: "Could not remove that shot",
+      cancelled: "Remove cancelled",
+      userText: `Remove shot ${frame.index + 1}`,
+      context: `Removed ${frame.durationSec.toFixed(1)}s · ${span}`,
+      thumbUrl: frame.imageUrl,
+    });
+  }
+
+  function pickSourceProject(item: HistoryItem) {
+    clearAttachment();
+    setSourceProject(item);
+    setIsHistoryPickerOpen(false);
+    setContinueAction("append");
+    setError(null);
+  }
+
+  const thread = isContinueMode && project ? mergeThread(threadFromProject(project), localThread) : [];
+  const hasThread = isContinueMode && (thread.length > 0 || pendingOp !== null);
+
+  function renderThreadEntry(entry: ThreadEntry) {
+    if (entry.role === "user") {
+      return (
+        <div key={entry.id} className="chat-bubble user">
+          {entry.thumbUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="chat-thumb" src={entry.thumbUrl} alt="" />
+          )}
+          <div>
+            <p>{entry.text}</p>
+            {entry.context && <small>{entry.context}</small>}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div key={entry.id} className={`chat-bubble assistant ${entry.edited ? "edited" : ""}`}>
+        {entry.text && <p>{entry.text}</p>}
+        {entry.edited && (entry.beforeUrl || entry.afterUrl) && (
+          <div className="chat-result">
+            {entry.beforeUrl && (
+              <figure>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={entry.beforeUrl} alt="Before" />
+                <figcaption>Before</figcaption>
+              </figure>
+            )}
+            {entry.beforeUrl && entry.afterUrl && <span aria-hidden="true">→</span>}
+            {entry.afterUrl && (
+              <figure>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={entry.afterUrl} alt="After" />
+                <figcaption>{entry.beforeUrl ? "After" : "New shot"}</figcaption>
+              </figure>
+            )}
+          </div>
+        )}
+        {entry.note && <small className="chat-note">✓ {entry.note}</small>}
+        {entry.enhancedPrompt && <details><summary>Enhanced prompt</summary><p>{entry.enhancedPrompt}</p></details>}
+        {entry.ragSources && <small className="chat-rag">Used guidance: {entry.ragSources.join(", ")}</small>}
+      </div>
+    );
   }
 
   const playheadPercent = Math.min(100, (currentTime / timelineTotal) * 100);
@@ -1207,6 +1596,19 @@ export default function Home() {
                         title={`Frame ${frame.index + 1} · ${formatSeconds(frame.startSec)}–${formatSeconds(frame.startSec + frame.durationSec)}`}
                       >
                         <span>#{frame.index + 1}{frame.source === "upload" && <b className="upload-badge" title="Uploaded clip">⬆</b>}</span>
+                        {project.frames.length > 1 && (
+                          <button
+                            type="button"
+                            className={`remove-shot ${confirmRemoveFrame === frame.index ? "confirm" : ""}`}
+                            disabled={isStoryboardProject || isEditing}
+                            title={isStoryboardProject ? "Removing shots isn't supported for storyboards yet" : confirmRemoveFrame === frame.index ? "Click again to remove this shot (can't be undone)" : `Remove shot ${frame.index + 1}`}
+                            aria-label={confirmRemoveFrame === frame.index ? `Confirm removing shot ${frame.index + 1}` : `Remove shot ${frame.index + 1}`}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => { event.stopPropagation(); requestRemoveFrame(frame); }}
+                          >
+                            {confirmRemoveFrame === frame.index ? "Confirm remove" : "✕"}
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -1216,7 +1618,7 @@ export default function Home() {
                     return <span key={`${frame.index}-${editIndex}-${edit.at}`} className="timeline-edit" style={{ left: `${(past.startSec / total) * 100}%`, width: `${((past.endSec - past.startSec) / total) * 100}%` }} title={`Edited ${formatWindow(past)} · ${edit.prompt}`} />;
                   }))}
                   {editWindow && (
-                    <span className={`timeline-window ${range ? "selected" : "suggested"}`} data-range-drag="move" style={{ left: `${(editWindow.startSec / timelineTotal) * 100}%`, width: `${((editWindow.endSec - editWindow.startSec) / timelineTotal) * 100}%` }} title={`${formatRange(editWindow)} — drag to move, drag the edges to resize`}>
+                    <span className={`timeline-window ${range ? "selected" : "suggested"}`} data-range-drag={range ? "move" : undefined} style={{ left: `${(editWindow.startSec / timelineTotal) * 100}%`, width: `${((editWindow.endSec - editWindow.startSec) / timelineTotal) * 100}%` }} title={`${formatRange(editWindow)} — drag to move, drag the edges to resize`}>
                       <span className="range-handle start" data-range-drag="start" aria-hidden="true" />
                       <span className="range-handle end" data-range-drag="end" aria-hidden="true" />
                       {rangeLimit && <span className="range-limit" role="status">{rangeLimit}</span>}
@@ -1241,7 +1643,16 @@ export default function Home() {
                       <strong>{isAppendMode ? `${(grab?.atSec ?? 0).toFixed(1)}s` : editWindow ? formatWindow(editWindow) : ""}</strong>
                       <small>{isAppendMode ? "Append mode adds to the end instead" : editWindow ? `${(editWindow.endSec - editWindow.startSec).toFixed(1)}s long · shot ${frameIndexAt(project.frames, editWindow.startSec) + 1} · drag the edges to adjust` : ""}</small>
                     </div>
-                    <button type="button" className="play-toggle" onClick={() => { setGrab(null); setRange(null); }}>Clear</button>
+                    <div className="grab-card-actions">
+                      {range && !isAppendMode && (
+                        <span title={isStoryboardProject ? "Removing parts isn't supported for storyboards yet" : "Cut this range out of the video (can't be undone)"}>
+                          <button type="button" className={`cut-button ${confirmCut ? "confirm" : ""}`} disabled={isStoryboardProject || isEditing} onClick={requestCutRange}>
+                            {confirmCut ? `Confirm remove ${(range.endSec - range.startSec).toFixed(1)}s` : `✂ Remove range (${(range.endSec - range.startSec).toFixed(1)}s)`}
+                          </button>
+                        </span>
+                      )}
+                      <button type="button" className="play-toggle" onClick={() => { setGrab(null); setRange(null); disarmConfirm(); }}>Clear</button>
+                    </div>
                   </div>
                 )}
                 <div className="editor-meta">
@@ -1299,10 +1710,34 @@ export default function Home() {
       </aside>
 
       <section className="prompt-stage">
-        <div className="prompt-content">
+        <div className={`prompt-content ${hasThread ? "has-thread" : ""}`}>
           <span className="eyebrow">AI video studio</span>
-          <h1>What&apos;s on your mind today?</h1>
-          <p>Describe a moment and get a {clipCopy} video. Or use + to make an ad, a company short, or a competitor summary.</p>
+          <h1>{hasThread ? openTitle : <>What&apos;s on your mind today?</>}</h1>
+          <p className="subtitle">Describe a moment and get a {clipCopy} video. Or use + to make an ad, a company short, or a competitor summary.</p>
+          {hasThread && (
+            <div className="chat-thread" ref={threadRef} aria-live="polite">
+              {thread.map((entry) => renderThreadEntry(entry))}
+              {pendingOp && (
+                <>
+                  {renderThreadEntry(pendingOp.user)}
+                  {pendingOp.error ? (
+                    <div className="chat-bubble assistant error" role="alert">
+                      <p>{pendingOp.error}</p>
+                      <button type="button" className="chat-link" onClick={retryThreadOp} disabled={isEditing}>↻ Retry</button>
+                    </div>
+                  ) : (
+                    <div className="chat-bubble assistant running">
+                      <BlobLoader label="Working…" size={56} />
+                      <div>
+                        <p>{pendingOp.detail}</p>
+                        <button type="button" className="chat-link" onClick={() => editAbortRef.current?.abort()}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <div
             className={`composer ${isDragOver ? "drag-over" : ""} ${isDragOver && attachDisabledReason && !(isContinueMode && continueAction === "edit" && !isStoryboardProject) ? "drag-blocked" : ""}`}
             onDragEnter={onComposerDragEnter}
@@ -1331,18 +1766,34 @@ export default function Home() {
               </div>
               </div>
             )}
-            {isContinueMode && frameReply && (
-              <div className={`frame-reply ${frameReply.edited ? "edited" : ""}`} role="status">
-                {frameReply.grabbedFrameUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img className="frame-reply-thumb" src={frameReply.grabbedFrameUrl} alt={`Frame at ${frameReply.atSec.toFixed(1)}s`} />
-                )}
-                <div className="frame-reply-body">
-                  <span className="frame-reply-label">{frameReply.label}</span>
-                  {frameReply.text && <p>{frameReply.text}</p>}
-                  {frameReply.enhancedPrompt && <details><summary>Enhanced prompt</summary><p>{frameReply.enhancedPrompt}</p></details>}
-                </div>
-                <button type="button" onClick={() => setFrameReply(null)} aria-label="Dismiss reply">✕</button>
+            {isAppendMode && isHistoryPickerOpen && (
+              <div className="history-picker" role="listbox" aria-label="Append a video from history">
+                {history.length === 0 ? <p className="history-empty">No videos in your history yet.</p> : history.map((item) => (
+                  <button key={item.projectId} type="button" role="option" aria-selected={sourceProject?.projectId === item.projectId} onClick={() => pickSourceProject(item)}>
+                    <span className="history-thumb">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      {item.thumbUrl ? <img src={item.thumbUrl} alt="" loading="lazy" /> : <span>▶</span>}
+                      <em>{item.durationSeconds}s</em>
+                    </span>
+                    <span className="history-text">
+                      <strong>{item.title}{item.projectId === openProjectId ? " (this video)" : ""}</strong>
+                      <small>{kindLabel(item.kind)} · {formatWhen(item.createdAt)}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {isAppendMode && sourceProject && (
+              <div className="attachment-chip done">
+                <span className="attachment-thumb">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {sourceProject.thumbUrl && <img src={sourceProject.thumbUrl} alt="" />}
+                </span>
+                <span className="attachment-info">
+                  <strong>From history: {sourceProject.title}</strong>
+                  <small>{sourceProject.durationSeconds}s · {kindLabel(sourceProject.kind)} · the prompt is ignored for this</small>
+                </span>
+                <button type="button" onClick={() => setSourceProject(null)} aria-label="Remove the history video">✕</button>
               </div>
             )}
             {attachment && (
@@ -1372,6 +1823,11 @@ export default function Home() {
               {!isContinueMode && <div className="media-selector">
                 <button className="add-button" type="button" aria-label="Choose another source" aria-expanded={isMediaMenuOpen} onClick={() => setIsMediaMenuOpen((open) => !open)}>+</button>
               </div>}
+              {isAppendMode && (
+                <span className="attach-wrap history-pick-wrap" title={isStoryboardProject ? "Append isn't supported for storyboards yet" : "Append a video from your history"}>
+                  <button type="button" className="history-pick-button" aria-haspopup="listbox" aria-expanded={isHistoryPickerOpen} disabled={isStoryboardProject} onClick={() => setIsHistoryPickerOpen((open) => !open)}>⟲ From history</button>
+                </span>
+              )}
               <span className="attach-wrap" title={attachDisabledReason ?? "Attach a video (MP4, MOV, WebM, M4V · max 200 MB)"}>
                 <button className="attach-button" type="button" aria-label="Attach a video" aria-disabled={attachDisabledReason !== null} onClick={openFilePicker}>
                   <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1381,7 +1837,7 @@ export default function Home() {
                 ref={promptInputRef}
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                placeholder={isAppendMode ? "Describe the next shot, or attach a video to add to the end…" : attachment && !isContinueMode ? "Optional: describe your video…" : isContinueMode ? `Continue editing at ${targetSec.toFixed(1)}s — describe what to change or ask about it…` : mediaType === "storyboard" ? "Storyboard file selected below" : mediaType === "rawtree" ? "No prompt needed — uses the latest competitor data" : mediaType === "ad" ? "Describe the product or offer to advertise…" : mediaType === "company" ? "Tell us about your company — what you do and for whom…" : `Describe your ${clipCopy} video`}
+                placeholder={isAppendMode && sourceProject ? `Append “${sourceProject.title}” — press send` : isAppendMode ? "Describe the next shot, or attach a video to add to the end…" : attachment && !isContinueMode ? "Optional: describe your video…" : isContinueMode ? `Continue editing at ${targetSec.toFixed(1)}s — describe what to change or ask about it…` : mediaType === "storyboard" ? "Storyboard file selected below" : mediaType === "rawtree" ? "No prompt needed — uses the latest competitor data" : mediaType === "ad" ? "Describe the product or offer to advertise…" : mediaType === "company" ? "Tell us about your company — what you do and for whom…" : `Describe your ${clipCopy} video`}
                 aria-label={isContinueMode ? `Edit or ask about the moment at ${targetSec.toFixed(1)} seconds` : "Video idea"}
                 maxLength={isContinueMode ? 4000 : 32000}
                 disabled={!isContinueMode && !attachment && (mediaType === "storyboard" || mediaType === "rawtree")}
@@ -1396,7 +1852,6 @@ export default function Home() {
             )}
             {!isContinueMode && mediaType === "storyboard" && <label className="storyboard-picker"><span><strong>Storyboard file</strong><small>Choose a local JSON file. Try <code>storyboards/mock_changes.json</code>; browsers cannot select it automatically.</small></span><input type="file" accept=".json,application/json" onChange={selectStoryboard} aria-describedby="storyboard-file-status" /><span id="storyboard-file-status" className={storyboardError ? "file-error" : storyboardFileName ? "file-success" : ""}>{storyboardError ?? (storyboardFileName ? `${storyboardFileName} is valid JSON.` : "No file selected.")}</span></label>}
             {!isContinueMode && isMediaMenuOpen && <div className="media-menu">
-              <button type="button" className={mediaType === null ? "selected" : ""} onClick={() => selectMediaType(null)}><span className="media-icon">▶</span><span><strong>Quick clip</strong><small>A {clipCopy} clip from your prompt</small></span></button>
               <button type="button" className={mediaType === "rawtree" ? "selected" : ""} onClick={() => selectMediaType("rawtree")}><span className="media-icon">◎</span><span><strong>Competitor summary</strong><small>A short summary of the latest competitor moves (RawTree)</small></span></button>
               <button type="button" className={mediaType === "ad" ? "selected" : ""} onClick={() => selectMediaType("ad")}><span className="media-icon">✦</span><span><strong>New ad</strong><small>A multi-scene ad from your product or offer</small></span></button>
               <button type="button" className={mediaType === "company" ? "selected" : ""} onClick={() => selectMediaType("company")}><span className="media-icon">◆</span><span><strong>Company short</strong><small>A short brand video about your company</small></span></button>
@@ -1408,7 +1863,7 @@ export default function Home() {
           {error && <p className="error-message" role="alert">{error}</p>}
           {notice && !error && <p className="cancel-note" role="status">{notice}</p>}
           {narrationMessages.length > 0 && <section className="narration-message" aria-live="polite"><strong>Narration review</strong><ul>{narrationMessages.map((message, index) => <li key={`${message}-${index}`}>{message}</li>)}</ul></section>}
-          <p className="hint">{isAppendMode ? `Adds a new shot at the end of “${openTitle}”: attach a video to append it as-is, or describe the next shot to generate it. Esc or ✕ goes back to new videos.` : !isContinueMode && attachment ? "Your video becomes a new project you can edit moment by moment or extend with more shots. A prompt is optional." : isContinueMode ? `Your message applies to ${editWindow ? formatWindow(editWindow) : `${targetSec.toFixed(1)}s`} of “${openTitle}” (frame ${targetFrame + 1}) — drag on the timeline strip to choose exactly which part to change. Describe a change to regenerate it and re-render the${project ? ` ${project.durationSeconds}s` : ""} video, or ask a question about it. Pause or use “Grab this frame” to pick a moment; Esc or ✕ goes back to new videos.` : <>{mediaType === "rawtree" ? "Summarizes the latest competitor moves from RawTree into a short video. No prompt needed." : mediaType === "ad" ? `Writes a ${presetLength}-second multi-scene ad (16:9) from your product or offer, then opens it in the editor. Takes 1–3 minutes.` : mediaType === "company" ? `Writes a ${presetLength}-second brand video about your company, then opens it in the editor. Takes 1–3 minutes.` : mediaType === "storyboard" ? "Select a valid local storyboard JSON file before rendering. Narration warnings must be reviewed before the server will render." : `Every prompt becomes a ${clipCopy} video with sound. Use + for ads, company shorts, or competitor summaries — or attach, drop, or paste a video to start from your own footage.`} Your BFL key stays on the server.</>}</p>
+          <p className="hint">{isAppendMode ? `Adds a new shot at the end of “${openTitle}”: attach a video or pick one from history to append it as-is, or describe the next shot to generate it. Esc or ✕ goes back to new videos.` : !isContinueMode && attachment ? "Your video becomes a new project you can edit moment by moment or extend with more shots. A prompt is optional." : isContinueMode ? `Your message applies to ${editWindow ? formatWindow(editWindow) : `${targetSec.toFixed(1)}s`} of “${openTitle}” (frame ${targetFrame + 1}) — drag on the timeline strip to choose exactly which part to change. Describe a change to regenerate it and re-render the${project ? ` ${project.durationSeconds}s` : ""} video, or ask a question about it. Pause or use “Grab this frame” to pick a moment; Esc or ✕ goes back to new videos.` : <>{mediaType === "rawtree" ? "Summarizes the latest competitor moves from RawTree into a short video. No prompt needed." : mediaType === "ad" ? `Writes a ${presetLength}-second multi-scene ad (16:9) from your product or offer, then opens it in the editor. Takes 1–3 minutes.` : mediaType === "company" ? `Writes a ${presetLength}-second brand video about your company, then opens it in the editor. Takes 1–3 minutes.` : mediaType === "storyboard" ? "Select a valid local storyboard JSON file before rendering. Narration warnings must be reviewed before the server will render." : `Every prompt becomes a ${clipCopy} video with sound. Use + for ads, company shorts, or competitor summaries — or attach, drop, or paste a video to start from your own footage.`} Your BFL key stays on the server.</>}</p>
         </div>
       </section>
     </main>
