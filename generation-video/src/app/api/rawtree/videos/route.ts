@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { RawTreeConfigurationError } from "@/lib/rawtree";
 import { logException } from "@/lib/runtime-log";
@@ -6,7 +7,7 @@ import { listPublishedVideos, VideoStoreError } from "@/lib/video-store";
 export const runtime = "nodejs";
 
 /** GET `?limit=&projectId=` → `{ videos }`: published video metadata rows from RawTree (no bytes), newest first. */
-export async function GET(request: Request) {
+async function routeGET(request: Request) {
   const params = new URL(request.url).searchParams;
   const rawLimit = params.get("limit");
   const limit = rawLimit === null ? 50 : Number(rawLimit);
@@ -22,3 +23,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to list RawTree videos." }, { status });
   }
 }
+
+export const GET = withRouteLog(routeGET);

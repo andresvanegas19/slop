@@ -1,5 +1,6 @@
 /* Company research sessions: pure helpers (prompt detection, snapshot + event folding). Field names are read tolerantly. */
-import type { ResearchFinding, ResearchQuestion, ResearchSession, ResearchStats } from "./types";
+import { parseStoryline } from "@/lib/storyline";
+import type { ResearchCompetitor, ResearchCompetitors, ResearchFinding, ResearchQuestion, ResearchSession, ResearchStats } from "./types";
 
 type Loose = Record<string, unknown>;
 const str = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -23,6 +24,18 @@ export const TERMINAL_STATUSES = new Set(["done", "complete", "completed", "fini
 
 export function isResearchRunning(session: ResearchSession) {
   return !TERMINAL_STATUSES.has(session.status) && !session.error;
+}
+
+const COMPETITORS_ACTIVE = new Set(["waiting", "running"]);
+
+export function isCompetitorResearchActive(session: ResearchSession) {
+  return Boolean(session.competitors && COMPETITORS_ACTIVE.has(session.competitors.status));
+}
+
+/** Keep following the session: the company research, its competitor research or a storyline is still in progress. */
+export function isResearchFollowing(session: ResearchSession) {
+  if (session.error && !isCompetitorResearchActive(session)) return false;
+  return isResearchRunning(session) || isCompetitorResearchActive(session) || session.storylineWriting === true;
 }
 
 export function newResearchSession(init: { id: string; prompt: string; company: string; durationSec: number; startedAt?: string }): ResearchSession {
@@ -101,6 +114,7 @@ export function applySnapshot(session: ResearchSession, value: unknown): Researc
     }
   }
   const profile = snapshot.profile ?? session.profile;
+  const storyline = snapshot.storyline === null ? session.storyline ?? null : toStoryline(snapshot.storyline) ?? session.storyline;
   return {
     ...session,
     status: str(snapshot.status) ?? session.status,
@@ -109,6 +123,72 @@ export function applySnapshot(session: ResearchSession, value: unknown): Researc
     questions,
     stats: mergeStats(session.stats, snapshot.stats),
     looping: typeof snapshot.looping === "boolean" ? snapshot.looping : session.looping,
+    competitors: toCompetitors(snapshot.competitors, session.competitors) ?? session.competitors,
+    storyline,
+  };
+}
+
+function toStoryline(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const parsed = parseStoryline(value);
+  if ("error" in parsed) {
+    console.error("[research] ignored an invalid storyline from the agent", parsed.error);
+    return undefined;
+  }
+  return parsed.storyline;
+}
+
+const strings = (value: unknown, max: number) => Array.isArray(value) ? value.flatMap((item) => typeof item === "string" && item.trim() ? [item.trim()] : []).slice(0, max) : [];
+
+function toCompetitor(value: unknown, previous?: ResearchCompetitor): ResearchCompetitor | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Loose;
+  const id = str(raw.id) ?? str(raw.competitor_id) ?? previous?.id;
+  const name = str(raw.name) ?? previous?.name;
+  if (!id || !name) return null;
+  const claims = strings(raw.claims, 8);
+  return {
+    id,
+    name,
+    domain: str(raw.domain) ?? previous?.domain,
+    verified: typeof raw.verified === "boolean" ? raw.verified : previous?.verified ?? false,
+    summary: str(raw.summary) ?? previous?.summary,
+    claims: claims.length ? claims : previous?.claims ?? [],
+    pages: num(raw.pages) ?? (Array.isArray(raw.pages) ? raw.pages.length : undefined) ?? previous?.pages ?? 0,
+    stage: str(raw.stage) ?? previous?.stage,
+    currentPage: previous?.currentPage,
+    error: str(raw.error) ?? previous?.error,
+  };
+}
+
+function upsertCompetitor(items: ResearchCompetitor[], value: unknown) {
+  const raw = value && typeof value === "object" ? value as Loose : {};
+  const id = str(raw.id) ?? str(raw.competitor_id);
+  const index = items.findIndex((item) => item.id === id);
+  const next = toCompetitor(value, index === -1 ? undefined : items[index]);
+  if (!next) return items;
+  return index === -1 ? [...items, next] : items.map((item, position) => position === index ? next : item);
+}
+
+/** The competitor landscape from a snapshot (`competitors`) or a `competitors` event (`landscape`). */
+function toCompetitors(value: unknown, current: ResearchCompetitors | undefined, status?: string, message?: string): ResearchCompetitors | undefined {
+  if (!value || typeof value !== "object") {
+    if (!status) return undefined;
+    return { items: [], differentiators: [], avoidTerms: [], ...current, status, message: message ?? current?.message };
+  }
+  const raw = value as Loose;
+  let items = current?.items ?? [];
+  if (Array.isArray(raw.competitors)) for (const competitor of raw.competitors) items = upsertCompetitor(items, competitor);
+  const differentiators = Array.isArray(raw.differentiators)
+    ? raw.differentiators.flatMap((item) => typeof item === "string" ? [item] : item && typeof item === "object" && str((item as Loose).text) ? [str((item as Loose).text) as string] : []).slice(0, 8)
+    : current?.differentiators ?? [];
+  const avoid = strings(raw.avoid_terms, 60);
+  return {
+    status: status ?? str(raw.status) ?? current?.status ?? "none",
+    message: message ?? str(raw.message) ?? str(raw.error) ?? current?.message,
+    items,
+    differentiators,
+    avoidTerms: avoid.length ? avoid : current?.avoidTerms ?? [],
   };
 }
 
@@ -157,6 +237,27 @@ export function applyResearchEvent(session: ResearchSession, value: unknown): Re
     case "error":
       next = { ...next, error: str(event.error) ?? str(event.message) ?? "Research failed." };
       break;
+    case "competitors":
+      next = { ...next, competitors: toCompetitors(event.landscape, next.competitors, str(event.status), str(event.message)) ?? next.competitors };
+      break;
+    case "competitor": {
+      const competitors = next.competitors ?? { status: "running", items: [], differentiators: [], avoidTerms: [] };
+      const competitor = event.competitor && typeof event.competitor === "object" ? { ...(event.competitor as Loose), stage: event.stage ?? (event.competitor as Loose).stage } : event;
+      next = { ...next, competitors: { ...competitors, items: upsertCompetitor(competitors.items, competitor) } };
+      break;
+    }
+    case "competitor_page": {
+      if (!next.competitors) break;
+      const competitorId = str(event.competitor_id) ?? str(event.competitor);
+      const url = str(event.url) ?? str(event.title);
+      next = { ...next, competitors: { ...next.competitors, items: next.competitors.items.map((item) => item.id === competitorId || item.name === competitorId ? { ...item, currentPage: url ?? item.currentPage } : item) } };
+      break;
+    }
+    case "storyline": {
+      const storyline = toStoryline(event.storyline);
+      next = storyline ? { ...next, storyline, storylineWriting: false } : { ...next, storylineWriting: str(event.stage) === "writing" ? true : str(event.stage) === "error" ? false : next.storylineWriting };
+      break;
+    }
   }
   return next;
 }

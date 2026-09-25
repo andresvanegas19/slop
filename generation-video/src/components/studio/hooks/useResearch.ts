@@ -7,7 +7,8 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createLineSplitter, parseStreamLine } from "../ndjson";
-import { applyResearchEvent, applySnapshot, isResearchRunning, newResearchSession } from "../research";
+import { parseStoryline, type Storyline } from "@/lib/storyline";
+import { applyResearchEvent, applySnapshot, isResearchFollowing, isResearchRunning, newResearchSession } from "../research";
 import type { ResearchSession } from "../types";
 import { errorMessage, readJson } from "../utils";
 import { userHeaders } from "./storage";
@@ -153,7 +154,8 @@ export function useResearch(target: ResearchTarget | null) {
           }
         }
         const current = sessionRef.current;
-        if (!current || !isResearchRunning(current)) break;
+        // Competitor research and storylines continue after the company research itself is done.
+        if (!current || !isResearchFollowing(current)) break;
         await sleep(failures ? 1500 * failures : 600, signal);
       }
       if (!signal.aborted) await loadSnapshot().catch(() => undefined);
@@ -205,9 +207,53 @@ export function useResearch(target: ResearchTarget | null) {
     }
   }
 
+  function storylineFrom(result: unknown): Storyline {
+    const parsed = parseStoryline((result as { storyline?: unknown } | null)?.storyline);
+    if ("error" in parsed) throw new Error(`The agent returned an invalid storyline: ${parsed.error}`);
+    return parsed.storyline;
+  }
+
+  /**
+   * Asks the agent's storyline tool for a storyline (what the user asked + research + competitors) for a video of
+   * `durationSec`, optionally forcing a template. Returns it, or null when it failed (see actionError).
+   */
+  async function requestStoryline(durationSec: number, template?: string): Promise<Storyline | null> {
+    const current = sessionRef.current;
+    if (!current || current.storylineWriting) return null;
+    setActionError(null);
+    const wasFollowing = isResearchFollowing(current);
+    mutate(current.id, (session) => ({ ...session, storylineWriting: true }));
+    // Follow the stream again so competitor progress (the storyline waits for it) shows up while it writes.
+    if (!wasFollowing) setRestartKey((key) => key + 1);
+    try {
+      const storyline = storylineFrom(await postJson(`/api/research/${encodeURIComponent(current.id)}/storyline`, { durationSec, prompt: current.prompt, ...(template ? { template } : {}), waitSec: 45 }));
+      mutate(current.id, (session) => ({ ...session, storyline, storylineWriting: false }));
+      return storyline;
+    } catch (caughtError) {
+      mutate(current.id, (session) => ({ ...session, storylineWriting: false }));
+      setActionError(caughtError instanceof Error ? caughtError.message : "Could not write the storyline.");
+      return null;
+    }
+  }
+
+  /** Saves the user's beat/title edits (the agent re-checks them: no competitor names). Returns the new version, or null. */
+  async function saveStorylineEdits(edits: Record<string, unknown>): Promise<Storyline | null> {
+    const current = sessionRef.current;
+    if (!current) return null;
+    setActionError(null);
+    try {
+      const storyline = storylineFrom(await postJson(`/api/research/${encodeURIComponent(current.id)}/storyline`, { edits }));
+      mutate(current.id, (session) => ({ ...session, storyline }));
+      return storyline;
+    } catch (caughtError) {
+      setActionError(caughtError instanceof Error ? caughtError.message : "Could not save your storyline edits.");
+      return null;
+    }
+  }
+
   // Until the first update lands, show the target as a fresh "starting" session.
   const shown = target ? session?.id === target.id ? session : newResearchSession(target) : null;
-  return { session: shown, actionError, answer, setLooping, stop };
+  return { session: shown, actionError, answer, setLooping, stop, requestStoryline, saveStorylineEdits, setActionError };
 }
 
 export type Research = ReturnType<typeof useResearch>;

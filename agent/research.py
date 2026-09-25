@@ -18,12 +18,14 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from contracts import TABLES, EventType
+from core.logs import event, in_context
 from contracts.research import (FINAL_STATUSES, FINDING_TOPICS, QUESTION_TOPICS, CompanyProfile, Finding,
                                 FollowUpQuestion, NewsItem, PageVisit, ResearchEventRow, ResearchIntent,
                                 ResearchSessionState, ResearchStatus, SourcedText, VideoBrief, VisualIdentity,
@@ -34,8 +36,9 @@ from .research_tools import (MAX_OPEN_QUESTIONS, MAX_OPTIONS, MAX_QUOTE_CHARS, M
                              clean_quote, norm, quote_in_page)
 from .user_context import expressed_topics, summary_line, user_context, valid_user_id
 from .videos import recent_videos
-from .web import (FetchError, Page, WebFetcher, compact, css_colors, find_dates, host_of, link_category,
-                  normalize_url, prioritized_links, site_of, slugs)
+from .web import (EXPECTED_FETCH_ERRORS, FetchError, HostNotAllowed, Page, WebFetcher, compact, css_colors,
+                  fetch_error_reason, find_dates, home_guard, home_problem, host_of, link_category, normalize_url,
+                  prioritized_links, site_of, slugs)
 
 log = logging.getLogger("agent.research")
 
@@ -205,6 +208,10 @@ class ResearchSession:
         return self.state.intent.company_name if self.state.intent else ""
 
     def emit(self, type_, **data):
+        # Mirror the session's event log into the structured log (status / finding / question / error …).
+        event(log, "research_" + type_, logging.WARNING if type_ == "error" else logging.INFO if type_ in (
+            "status", "question", "profile") else logging.DEBUG,
+              **{k: v for k, v in data.items() if isinstance(v, (str, int, float, bool)) and k != "quote"})
         return self.store.append_event(self.sid, type_, data)
 
     def save(self):
@@ -221,7 +228,9 @@ class ResearchSession:
         return self.thread is not None and self.thread.is_alive()
 
     def start(self):
-        self.thread = threading.Thread(target=self.run, name="research-" + self.sid[-8:], daemon=True)
+        # The session thread keeps the trace of the request that started it, plus the session id.
+        self.thread = threading.Thread(target=in_context(self.run, sessionId=self.sid), name="research-" + self.sid[-8:],
+                                       daemon=True)
         self.thread.start()
 
     def stop(self):
@@ -330,6 +339,10 @@ class ResearchSession:
                 "theme_color": page.theme_color, "colors": page.colors, "logo_url": page.logo_url}
         visit = PageVisit(url=page.url, title=page.title, description=page.description, status=page.status,
                           chars=len(page.text), fetched_at=_now())
+        if page.url in self.pages and page.url != requested:  # a redirect to a page we already have
+            with self.lock:
+                self.pages[requested] = self.pages[page.url]
+            return self.pages[page.url]
         with self.lock:
             self.pages[requested] = data
             self.pages[page.url] = data
@@ -567,35 +580,64 @@ class ResearchSession:
             d = intent.likely_domain
             candidates += ["https://www.{}/".format(d), "https://{}/".format(d)]
         for s in slugs(intent.company_name):
-            for tld in ("com", "co", "io", "ai"):
+            for tld in ("com", "co", "io", "ai", "app"):
                 candidates += ["https://www.{}.{}/".format(s, tld), "https://{}.{}/".format(s, tld)]
-        seen, checked = set(), 0
+        names = {compact(intent.company_name)} | {compact(s) for s in slugs(intent.company_name)}
+        seen, checked, rejected = set(), 0, set()
+        misses = []  # "address: why it was not the company's site", for the final error
+
+        def miss(url_, reason, quiet=False):
+            misses.append("{}: {}".format(url_.split("//", 1)[-1].rstrip("/"), reason))
+            if not quiet:
+                self.emit("status", status=self.state.status.value, message="skipping {}: {}".format(
+                    site_of(host_of(url_)), reason))
+
         for url in candidates:
-            if url in seen or checked >= 12 or self.stop_event.is_set():
+            if url in seen or checked >= 12 or self.stop_event.is_set() or site_of(host_of(url)) in rejected:
                 continue
             seen.add(url)
             checked += 1
             self.emit("status", status=self.state.status.value, message="checking {}".format(url))
             try:
-                page = self.fetcher.fetch(url, allowed=None)
-            except Exception:
+                page = self.fetcher.fetch(url, allowed=home_guard(url, names))
+            except HostNotAllowed as e:  # redirected to a parking page or another company's site
+                rejected.add(site_of(host_of(url)))
+                miss(url, "redirects to {}".format(str(e).rsplit(": ", 1)[-1][:120]))
+                continue
+            except EXPECTED_FETCH_ERRORS as e:  # no site there (DNS, refused, timeout, robots.txt …)
+                miss(url, fetch_error_reason(e), quiet=True)
+                continue
+            except Exception as e:
+                log.exception("checking %s for %s failed", url, intent.company_name)
+                miss(url, "unexpected {}".format(fetch_error_reason(e)), quiet=True)
+                self.emit("error", where="resolve", url=url, message=fetch_error_reason(e))
+                continue
+            if page.status != 200:
+                miss(url, "HTTP {}".format(page.status), quiet=True)
                 continue
             body = compact(" ".join([page.title, page.description, page.text[:30000]]))
-            names = {compact(intent.company_name)} | {compact(s) for s in slugs(intent.company_name)}
-            if page.status == 200 and any(n and n in body for n in names):
-                with self.lock:
-                    self.state.allowed_hosts = sorted({site_of(host_of(url)), site_of(host_of(page.url))})
-                    self.state.domain = site_of(host_of(page.url))
-                    self.state.home_url = page.url
-                    self.save()
-                self.emit("status", status=self.state.status.value, message="website: {}".format(page.url),
-                          domain=self.state.domain, home_url=page.url)
-                self.round_pages = 0
-                self._remember(url, page)
-                self.brand_colors(page)
-                return
-        self.state.error = ("could not find {}'s website (tried {} addresses); include the domain in the prompt, "
-                            "e.g. 'coca-cola.com'".format(intent.company_name, checked))
+            if not any(n and n in body for n in names):
+                miss(url, "page does not mention {}".format(intent.company_name[:60]), quiet=True)
+                continue
+            problem = home_problem(url, page, names)
+            if problem:  # a parked domain or someone else's site: the www / bare twin will not be better
+                rejected.add(site_of(host_of(url)))
+                miss(url, problem)
+                continue
+            with self.lock:
+                self.state.allowed_hosts = sorted({site_of(host_of(url)), site_of(host_of(page.url))})
+                self.state.domain = site_of(host_of(page.url))
+                self.state.home_url = page.url
+                self.save()
+            self.emit("status", status=self.state.status.value, message="website: {}".format(page.url),
+                      domain=self.state.domain, home_url=page.url)
+            self.round_pages = 0
+            self._remember(url, page)
+            self.brand_colors(page)
+            return
+        why = "; ".join(misses[:4]) + (" …" if len(misses) > 4 else "")
+        self.state.error = ("could not find {}'s website (tried {} addresses{}); include the domain in the prompt, "
+                            "e.g. 'coca-cola.com'".format(intent.company_name, checked, ": " + why if why else ""))
 
     def brand_colors(self, page):
         """Brand colors usually live in the site's stylesheets: scan up to two same-site CSS files of the homepage."""
@@ -606,10 +648,14 @@ class ResearchSession:
                 continue
             try:
                 got = self.fetcher.fetch(url, allowed=self.allowed)
-                if got.status == 200:
-                    css.append(got.text)
-            except Exception:
+            except EXPECTED_FETCH_ERRORS as e:  # colors are optional: note it and use the page's own colors
+                event(log, "research_stylesheet_skipped", logging.DEBUG, url=url, reason=fetch_error_reason(e))
                 continue
+            except Exception:
+                log.exception("reading stylesheet %s failed", url)
+                continue
+            if got.status == 200:
+                css.append(got.text)
         data = self.pages.get(page.url)
         if not css or data is None:
             return
@@ -639,9 +685,7 @@ class ResearchSession:
             nxt = self.next_link()
             if nxt is None:
                 break
-            page = self.get_page(nxt)
-            if page and "error" not in page:
-                self.extract_page(page)
+            self.get_page(nxt)
         self.extract_pending()
 
     def next_link(self) -> Optional[str]:
@@ -662,21 +706,37 @@ class ResearchSession:
         return best
 
     def extract_pending(self):
-        for url, page in list(self.pages.items()):
+        """Findings from every fetched page not read yet. Each Liquid call takes 5-20 s (the model always reasons),
+        so up to `research_parallel` pages are read at once; findings are applied in page order either way."""
+        pages = [page for url, page in list(self.pages.items())
+                 if url == page.get("url") and page.get("status") == 200 and url not in self.extracted]
+        if not pages or self.stop_event.is_set():
+            return
+        self.extracted.update(page["url"] for page in pages)
+        workers = min(max(1, self.settings.research_parallel), len(pages)) if self.llm is not None else 1
+        if workers == 1:
+            replies = [self.extract_page(page) for page in pages]
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract-" + self.sid[-8:]) as pool:
+                replies = [f.result() for f in [pool.submit(in_context(self.extract_page), page) for page in pages]]
+        for page, got in zip(pages, replies):
             if self.stop_event.is_set():
                 return
-            if url == page.get("url") and page.get("status") == 200 and url not in self.extracted:
-                self.extract_page(page)
+            self.apply_extract(page, got)
 
-    def extract_page(self, page: dict):
+    def extract_page(self, page: dict) -> Optional[dict]:
+        """Liquid's reply for one page (`purpose=extract_page` in llm_call_done log lines)."""
+        if self.llm is None or self.stop_event.is_set():
+            return None
+        return self.ask_json(EXTRACT_PROMPT.format(
+            name=self.company, url=page["url"], title=page.get("title", ""),
+            text=page.get("text", "")[:EXTRACT_PAGE_CHARS], n=MAX_FINDINGS_PER_PAGE, topics=", ".join(FINDING_TOPICS)))
+
+    def apply_extract(self, page: dict, got: Optional[dict]):
         """Findings from one page: Liquid proposes quotes, code keeps only verbatim ones. Deterministic fallback:
         the meta description and the first substantial paragraphs."""
         url = page["url"]
-        self.extracted.add(url)
         added = 0
-        got = self.ask_json(EXTRACT_PROMPT.format(
-            name=self.company, url=url, title=page.get("title", ""), text=page.get("text", "")[:EXTRACT_PAGE_CHARS],
-            n=MAX_FINDINGS_PER_PAGE, topics=", ".join(FINDING_TOPICS))) if self.llm is not None else None
         for item in (got or {}).get("findings", [])[:MAX_FINDINGS_PER_PAGE] if isinstance(got, dict) else []:
             if isinstance(item, dict):
                 res = self.add_finding(item.get("topic"), item.get("claim"), url, str(item.get("quote", "")),
@@ -736,6 +796,7 @@ class ResearchSession:
                 messages += [AIMessage(text), HumanMessage("Tool budget reached. Write the Final Answer now.")]
                 continue
             tool = lc.get(name)
+            t0 = time.perf_counter()
             if tool is None:
                 obs = json.dumps({"error": "unknown tool {!r}; use one of {}".format(name, sorted(lc))})
             else:
@@ -743,6 +804,10 @@ class ResearchSession:
                     obs = tool.invoke(args or {})
                 except Exception as e:
                     obs = json.dumps({"error": "bad arguments: {}".format(str(e)[:300])})
+            event(log, "tool_call_done", logging.INFO if '"error"' not in obs[:20] else logging.WARNING, tool=name,
+                  step=step, round=n, ok='"error"' not in obs[:20], inputChars=len(json.dumps(args or {}, default=str)),
+                  outputChars=len(obs), error=obs[:200] if '"error"' in obs[:20] else None,
+                  durationMs=int((time.perf_counter() - t0) * 1000))
             self.emit("status", status=self.state.status.value, message="tool {}".format(name), tool=name,
                       step=step, ok='"error"' not in obs[:20])
             messages += [AIMessage("Action: {}\nAction Input: {}".format(name, json.dumps(args, default=str))),
@@ -818,7 +883,7 @@ class ResearchSession:
             if re.search(r"©|copyright|all rights reserved", f.quote, re.I):
                 continue
             dates = find_dates(f.quote) or find_dates(f.claim) or find_dates(f.evidence_url)
-            years = [int(y) for y in re.findall(r"\b(19\d\d|20\d\d)\b", " ".join(dates) or f.quote)]
+            years = [int(y) for y in re.findall(r"\b(1[6-9]\d\d|20\d\d)\b", " ".join(dates) or f.quote)]
             if years and max(years) < this_year - 2:  # history, not news
                 continue
             news.append(NewsItem(title=_clip(f.claim, 300), date=dates[0] if dates else None, url=f.evidence_url))

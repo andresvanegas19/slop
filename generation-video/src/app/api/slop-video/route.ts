@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +18,7 @@ import {
 } from "@/lib/slop-storyboard";
 import { renderStoryboard, totalDurationMs } from "@/lib/storyboard-renderer";
 import { validateStoryboard } from "@/lib/storyboard";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 
@@ -120,13 +122,13 @@ function flag(value: unknown) {
 }
 
 /** GET = dry run. `?includeTestRows=1` disables the test-row filter. */
-export async function GET(request: Request) {
+async function routeGET(request: Request) {
   const params = new URL(request.url).searchParams;
   return handle({ dryRun: true, includeTestRows: flag(params.get("includeTestRows")) });
 }
 
 /** POST `{ dryRun?: boolean, includeTestRows?: boolean }` (empty body = render with real rows only). */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const raw = await request.text();
   let body: Record<string, unknown> = {};
   if (raw.trim()) {
@@ -142,3 +144,7 @@ export async function POST(request: Request) {
   }
   return handle({ dryRun: flag(body.dryRun), includeTestRows: flag(body.includeTestRows) });
 }
+
+export const POST = withRouteLog(jobable("rawtree", handlePost));
+
+export const GET = withRouteLog(routeGET);

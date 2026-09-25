@@ -5,15 +5,18 @@
  * Components read the returned view model; API calls, request bodies, storage keys and copy live here.
  */
 import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, SyntheticEvent, useEffect, useRef, useState } from "react";
-import type { AppendResult, AskResult, BusyState, CommandResult, ContinueAction, FrameGrab, HistoryItem, HistoryKind, LiveProgress, MediaType, PendingOp, Project, ProjectFrame, RangeDrag, RenderResult, ThreadEntry, TimeWindow } from "../types";
-import { FRAME_STEP, MAX_UPLOAD_BYTES, RANGE_MIN_SEC, clampRange, captureVideoThumb, defaultRange, errorMessage, formatBytes, formatWindow, frameIndexAt, historyItemFromProject, isAbortError, isProject, isTimeWindow, isVideoFile, issueMessages, kindLabel, mergeThread, nowIso, ragLabels, readJson, threadFromProject } from "../utils";
-import { setHistoryOpen, updateHistory, useHistory, useHistoryOpen } from "./historyStore";
-import { loadContinueMode, loadLocalThread, saveContinueMode, saveLocalThread, userHeaders } from "./storage";
+import type { AppendResult, AskResult, BusyState, CommandResult, ContinueAction, FrameGrab, HistoryItem, HistoryKind, LiveProgress, MediaType, NewVideoSuggestion, PendingOp, Project, ProjectFrame, RangeDrag, RenderResult, ThreadEntry, TimeWindow } from "../types";
+import { FRAME_STEP, MAX_UPLOAD_BYTES, RANGE_MIN_SEC, clampRange, captureVideoThumb, defaultRange, errorMessage, formatBytes, formatWindow, frameIndexAt, historyItemFromProject, isAbortError, isProject, isTimeWindow, isVideoFile, issueMessages, kindLabel, mergeThread, nowIso, memoryChips, ragLabels, readJson, threadFromProject } from "../utils";
+import { readHistory, setHistoryOpen, updateHistory, useHistory, useHistoryOpen } from "./historyStore";
+import { useStories } from "./useStories";
+import { loadContinueMode, loadLocalThread, saveContinueMode, saveLocalThread } from "./storage";
 import { useAbortSlot } from "./useAbortSlot";
 import { emptyLive, reduceLive } from "../live";
-import { streamJson, type StreamEvent } from "../stream";
+import type { StreamEvent } from "../stream";
+import { cancelJob as cancelServerJob, fetchActiveJobs, fetchJob, loadStoredJobs, removeStoredJob, resumeJob as resumeServerJob, runJob, saveStoredJob, subscribeStoredJobs, updateStoredJob, type StoredJob } from "../jobs";
 import { useVideoAttachment } from "./useVideoAttachment";
-import { companyFromPrompt } from "../research";
+import { presetDuration, researchCompanyFor } from "../research-detect";
+import type { Storyline } from "@/lib/storyline";
 import { getActiveResearchId, setActiveResearch, startResearchSession, useActiveResearch, useResearch, type ResearchTarget } from "./useResearch";
 import { startMarketSession, useMarket } from "./useMarket";
 
@@ -22,6 +25,11 @@ export function useStudio() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingKind, setGeneratingKind] = useState<HistoryKind>("clip");
   const [generationLive, setGenerationLive] = useState<LiveProgress | null>(null);
+  // The prompt of the running new generation (shown on the main stage while it works).
+  const [generatingPrompt, setGeneratingPrompt] = useState("");
+  // Jobs interrupted by a server restart (from localStorage), offered for Resume.
+  const [interruptedJobs, setInterruptedJobs] = useState<StoredJob[]>([]);
+  const restoredRef = useRef(false);
   const [isStartingResearch, setIsStartingResearch] = useState(false);
   const homeResearch = useActiveResearch();
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +83,26 @@ export function useStudio() {
   const threadRef = useRef<HTMLDivElement>(null);
   const [editedNote, setEditedNote] = useState<string | null>(null);
   const [presetLength, setPresetLength] = useState(10);
+  // "Stories" (+ menu): N different 3-beat stories → pick one → one continuous video (see useStories / StoryPicker).
+  const [storyCount, setStoryCount] = useState(3);
+  const [storyLength, setStoryLength] = useState(5);
+  const stories = useStories({ onProjects: addStoryProjects });
+  function addStoryProjects(projects: Project[]) {
+    {
+      const items: HistoryItem[] = projects.map((created) => ({
+        projectId: created.id,
+        title: created.title || "Story",
+        videoUrl: created.videoUrl,
+        thumbUrl: created.frames[0]?.imageUrl ?? "",
+        durationSeconds: created.durationSeconds,
+        createdAt: created.createdAt || new Date().toISOString(),
+        kind: "clip",
+        generatedSeconds: created.durationSeconds,
+      }));
+      updateHistory((existing) => [...items, ...existing.filter((item) => !items.some((added) => added.projectId === item.projectId))]);
+      if (items[0]) void openProject(items[0]);
+    }
+  }
   const videoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const isScrubbingRef = useRef(false);
@@ -139,7 +167,7 @@ export function useStudio() {
   }, [isGenerating, isEditorOpen, generationAbort]);
 
   // New research questions / answers also scroll the conversation.
-  const researchMessages = research.session ? research.session.questions.length + research.session.questions.filter((question) => question.answered).length : 0;
+  const researchMessages = research.session ? research.session.questions.length + research.session.questions.filter((question) => question.answered).length + (research.session.competitors ? 1 : 0) + (research.session.storylineWriting ? 1 : 0) + (research.session.storyline?.version ?? 0) : 0;
   const marketProgress = marketRun ? `${marketRun.view?.status}:${marketRun.view?.competitors.length}:${marketRun.view?.developments.length}:${marketRun.render.status}` : "";
   const threadLength = isContinueMode && project ? Object.values(project.chats ?? {}).reduce((total, list) => total + (Array.isArray(list) ? list.length : 0), 0) + localThread.length : 0;
   useEffect(() => {
@@ -198,7 +226,7 @@ export function useStudio() {
     ? Boolean(project) && !isEditing && Boolean(prompt.trim())
     : attachmentReady
     ? !isGenerating && !isStartingResearch
-    : !isGenerating && !isStartingResearch && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "market" ? !isMarketRunning && Boolean(prompt.trim()) : Boolean(prompt.trim()));
+    : !isGenerating && !isStartingResearch && (mediaType === "storyboard" ? Boolean(storyboard) : mediaType === "rawtree" ? true : mediaType === "market" ? !isMarketRunning && Boolean(prompt.trim()) : mediaType === "stories" ? Boolean(prompt.trim()) && !stories.isBusy : Boolean(prompt.trim()));
   const latestClip = history.find((item) => item.kind === "clip");
   // Length of a freshly generated quick clip (edits/cuts change durationSeconds, so prefer the original length).
   const clipSeconds = latestClip ? latestClip.generatedSeconds ?? latestClip.durationSeconds : null;
@@ -312,30 +340,38 @@ export function useStudio() {
     const upload = attachment?.upload;
     if (!canSubmit || !upload) return;
 
-    const promptText = prompt.trim();
+    await runUpload({ uploadId: upload.id, filename: upload.filename, promptText: prompt.trim() });
+  }
+
+  async function runUpload(params: { uploadId: string; filename: string; promptText: string }, attach?: string) {
+    const { promptText } = params;
     const controller = generationAbort.begin();
     setIsGenerating(true);
     setGeneratingKind("upload");
+    setGeneratingPrompt(promptText || params.filename);
+    setGenerationLive(null);
     setError(null);
     setNotice(null);
     setNarrationMessages([]);
     try {
-      const response = await fetch("/api/projects/from-upload", {
-        method: "POST",
-        headers: { ...userHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify(promptText ? { uploadId: upload.id, prompt: promptText } : { uploadId: upload.id }),
-        signal: controller.signal,
-      });
-      const result = await readJson<{ project?: unknown; error?: unknown }>(response, `Could not import the video (HTTP ${response.status}).`);
-      if (!response.ok) {
-        console.error(`[generate] /api/projects/from-upload failed with HTTP ${response.status}`, result);
+      const { ok, status, result } = await runJob<{ project?: unknown; error?: unknown }>(
+        "/api/projects/from-upload",
+        promptText ? { uploadId: params.uploadId, prompt: promptText } : { uploadId: params.uploadId },
+        (event, at) => setGenerationLive((current) => reduceLive(current ?? emptyLive(at), event, at)),
+        controller.signal,
+        { attach, meta: { kind: "upload", prompt: promptText || params.filename, op: params }, nonJsonError: (code) => `Could not import the video (HTTP ${code}).` },
+      );
+      if (!ok) {
+        console.error(`[generate] /api/projects/from-upload failed with HTTP ${status}`, result);
         throw new Error(errorMessage(result, "Could not import the video."));
       }
       if (!isProject(result.project)) throw new Error("The server did not return a project for the uploaded video.");
-      const item = historyItemFromProject(result.project, "upload", promptText || upload.filename);
+      const item = historyItemFromProject(result.project, "upload", promptText || params.filename);
       updateHistory((items) => [item, ...items.filter((existing) => existing.projectId !== item.projectId)]);
-      setPrompt("");
-      clearAttachment();
+      if (!attach) {
+        setPrompt("");
+        clearAttachment();
+      }
       void openProject(item);
     } catch (caughtError) {
       if (controller.signal.aborted || isAbortError(caughtError)) {
@@ -353,12 +389,22 @@ export function useStudio() {
   async function generateMedia(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) return;
+    if (mediaType === "stories") {
+      const storyPrompt = prompt.trim();
+      setError(null);
+      setPrompt("");
+      await stories.start(storyPrompt, storyCount, storyLength);
+      return;
+    }
 
     const kind: HistoryKind = mediaType ?? "clip";
     const promptText = prompt.trim();
     const lengthSec = presetLength;
-    // Company shorts, or a prompt that names a company ("make a video for Coca-Cola"), research the company first.
-    const researchCompany = kind === "company" ? "" : kind === "clip" ? companyFromPrompt(promptText) : null;
+    // Company shorts, or a prompt that names a company ("make a video for Coca-Cola"), research the company (and its
+    // competitors) first. On the first home prompt Liquid decides whether it names one; later prompts use the rules.
+    const firstPrompt = !isEditorOpen && !homeResearch;
+    if (firstPrompt && kind !== "company") setIsStartingResearch(true);
+    const researchCompany = await researchCompanyFor(kind, promptText, firstPrompt).finally(() => setIsStartingResearch(false));
     if (researchCompany !== null && promptText) {
       await beginResearch(promptText, researchCompany, lengthSec);
       return;
@@ -409,43 +455,52 @@ export function useStudio() {
   /** Renders the storyboard the agent stored for market session `id` (called once it's ready, or on Retry). */
   async function renderMarket(id: string, storyboardId: string) {
     market.setRender(id, { status: "rendering" });
-    const outcome = await runGeneration("market", marketRun?.prompt ?? "", 0, undefined, storyboardId);
+    const outcome = await runGeneration("market", marketRun?.prompt ?? "", 0, undefined, undefined, undefined, storyboardId);
     if (outcome.ok) market.dismiss();
     else market.setRender(id, { status: "error", error: outcome.error });
   }
 
-  /** "Create video now": renders the company short from the research session. */
-  function createVideoFromResearch() {
+  /** "Create video now": the agent writes a storyline from the request + research (shown for review, not rendered yet). */
+  function createVideoFromResearch(template?: string) {
     const session = research.session;
     if (!session || isGenerating) return;
-    void runGeneration("company", session.prompt, session.durationSec, session.id);
+    void research.requestStoryline(presetDuration(session.durationSec), template);
   }
 
-  async function runGeneration(kind: HistoryKind, promptText: string, lengthSec: number, researchSessionId?: string, storyboardId?: string): Promise<{ ok: boolean; error?: string }> {
-    const failureLabel = kind === "market" ? "The market update video could not be rendered." : kind === "storyboard" ? "Storyboard rendering failed." : kind === "ad" ? "The ad could not be created." : kind === "company" ? "The company short could not be created." : "Video generation failed.";
+  /** "Approve & create": saves the user's storyline edits, then renders it with its template (preset). */
+  async function approveStoryline(edits: Record<string, unknown> | null) {
+    const session = research.session;
+    if (!session?.storyline || isGenerating) return;
+    const storyline = edits ? await research.saveStorylineEdits(edits) : session.storyline;
+    if (!storyline) return;
+    await runGeneration(storyline.template === "company" ? "company" : "ad", session.prompt, storyline.duration_sec, session.id, undefined, storyline);
+  }
+
+  async function runGeneration(kind: HistoryKind, promptText: string, lengthSec: number, researchSessionId?: string, attach?: string, storyline?: Storyline, storyboardId?: string): Promise<{ ok: boolean; error?: string }> {
+    const failureLabel = kind === "market" ? "The market update video could not be rendered." : kind === "rawtree" ? "The competitor summary failed." : kind === "storyboard" ? "Storyboard rendering failed." : kind === "ad" ? "The ad could not be created." : kind === "company" ? "The company short could not be created." : "Video generation failed.";
     const controller = generationAbort.begin();
     setIsGenerating(true);
     setGeneratingKind(kind);
+    setGeneratingPrompt(kind === "storyboard" ? storyboardFileName ?? "" : kind === "rawtree" ? "" : promptText);
     setGenerationLive(null);
     setError(null);
     setNotice(null);
     setNarrationMessages([]);
     try {
-      const endpoint = kind === "market" ? "/api/market-video" : kind === "storyboard" ? "/api/render-storyboard" : kind === "ad" || kind === "company" ? "/api/generate-preset" : "/api/generate-video";
+      const endpoint = kind === "market" ? "/api/market-video" : kind === "rawtree" ? "/api/slop-video" : kind === "storyboard" ? "/api/render-storyboard" : kind === "ad" || kind === "company" ? "/api/generate-preset" : "/api/generate-video";
       const requestBody = kind === "market" ? { storyboard_id: storyboardId }
+        : kind === "rawtree" ? {}
         : kind === "storyboard" ? storyboard
-        : kind === "ad" ? { preset: "ad", prompt: promptText, durationSec: lengthSec, aspect: "16:9" }
-        : kind === "company" ? { preset: "company", prompt: promptText, durationSec: lengthSec, ...(researchSessionId ? { researchSessionId } : {}) }
+        : kind === "ad" ? { preset: storyline?.template ?? "ad", prompt: promptText, durationSec: lengthSec, aspect: "16:9", ...(researchSessionId ? { researchSessionId } : {}), ...(storyline ? { storyline } : {}) }
+        : kind === "company" ? { preset: "company", prompt: promptText, durationSec: lengthSec, ...(researchSessionId ? { researchSessionId } : {}), ...(storyline ? { storyline } : {}) }
         : { prompt: promptText };
-      const streams = endpoint === "/api/generate-video" || endpoint === "/api/generate-preset";
-      const { ok, status, result } = streams
-        ? await streamJson<RenderResult>(endpoint, requestBody, (event) => setGenerationLive((current) => reduceLive(current ?? emptyLive(Date.now()), event, Date.now())), controller.signal)
-        : await fetch(endpoint, {
-          method: "POST",
-          headers: { ...userHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        }).then(async (response) => ({ ok: response.ok, status: response.status, result: await readJson<RenderResult>(response) }));
+      const { ok, status, result } = await runJob<RenderResult>(
+        endpoint,
+        requestBody,
+        (event, at) => setGenerationLive((current) => reduceLive(current ?? emptyLive(at), event, at)),
+        controller.signal,
+        { attach, meta: { kind: "generation", prompt: promptText, op: { kind, promptText, lengthSec, ...(researchSessionId ? { researchSessionId } : {}) } } },
+      );
       if (!ok) {
         console.error(`[generate] ${endpoint} failed with HTTP ${status}`, result);
         const messages = issueMessages(result.details);
@@ -480,7 +535,7 @@ export function useStudio() {
       // The research now lives with the video (reopening it shows the session); leave the home screen's copy.
       if (researchSessionId && getActiveResearchId() === researchSessionId) setActiveResearch(null);
       if (kind === "ad" || kind === "company" || kind === "market") {
-        if (!researchSessionId && kind !== "market") setPrompt("");
+        if (!researchSessionId && !attach && kind !== "market") setPrompt("");
         void openProject(item);
       }
       return { ok: true };
@@ -751,14 +806,14 @@ export function useStudio() {
     if (openProjectIdRef.current === projectId) setLocalThread(next);
   }
 
-  function startThreadOp(user: ThreadEntry, detail: string, retry: () => void) {
+  function startThreadOp(user: ThreadEntry, detail: string, retry: () => void, target?: PendingOp["target"]) {
     retryRef.current = retry;
-    setPendingOp({ user, detail, error: null });
+    setPendingOp({ user, detail, error: null, target });
   }
 
   /** Folds a streamed progress event into the pending bubble (ignored once it has failed or been replaced). */
-  function applyLiveEvent(userId: string, event: StreamEvent) {
-    setPendingOp((current) => current && current.user.id === userId && !current.error ? { ...current, live: reduceLive(current.live ?? emptyLive(Date.now()), event, Date.now()) } : current);
+  function applyLiveEvent(userId: string, event: StreamEvent, at = Date.now()) {
+    setPendingOp((current) => current && current.user.id === userId && !current.error ? { ...current, live: reduceLive(current.live ?? emptyLive(at), event, at) } : current);
   }
 
   function failThreadOp(message: string) {
@@ -789,13 +844,13 @@ export function useStudio() {
     });
   }
 
-  async function runAsk(params: { projectId: string; frameIndex: number; message: string; atSec: number; window: TimeWindow; thumbUrl?: string | null }) {
+  async function runAsk(params: { projectId: string; frameIndex: number; message: string; atSec: number; window: TimeWindow; thumbUrl?: string | null }, attach?: string) {
     const { projectId, frameIndex, message, atSec, window: requestedWindow } = params;
     pauseQuietly();
     const controller = editAbort.begin();
     const detail = `Regenerating ${formatWindow(requestedWindow)}…`;
     const pendingUser: ThreadEntry = { id: nextThreadId("pending"), role: "user", text: message, at: nowIso(), context: `${formatWindow(requestedWindow)} · shot ${frameIndex + 1}`, thumbUrl: params.thumbUrl ?? undefined };
-    startThreadOp(pendingUser, detail, () => void runAsk(params));
+    startThreadOp(pendingUser, detail, () => void runAsk(params), { window: requestedWindow });
     setEditingAt(atSec);
     setRange(requestedWindow);
     setBusy({ label: "Updating your video", detail });
@@ -803,12 +858,12 @@ export function useStudio() {
     setNotice(null);
     setEditedNote(null);
     try {
-      const { ok, status, result } = await streamJson<AskResult>(
+      const { ok, status, result } = await runJob<AskResult>(
         `/api/projects/${encodeURIComponent(projectId)}/frames/${frameIndex}/ask`,
         { message, atSec, rangeStartSec: Math.round(requestedWindow.startSec * 1000) / 1000, rangeEndSec: Math.round(requestedWindow.endSec * 1000) / 1000 },
-        (event) => applyLiveEvent(pendingUser.id, event),
+        (event, at) => applyLiveEvent(pendingUser.id, event, at),
         controller.signal,
-        (code) => `Frame assistant unavailable (HTTP ${code}). The server endpoint isn't ready yet.`,
+        { attach, meta: { kind: "ask", projectId, prompt: message, op: params }, nonJsonError: (code) => `Frame assistant unavailable (HTTP ${code}). The server endpoint isn't ready yet.` },
       );
       if (!ok) {
         console.error(`[editor] frame ask failed with HTTP ${status}`, result);
@@ -880,7 +935,7 @@ export function useStudio() {
     });
   }
 
-  async function runAppend(params: { projectId: string; prompt?: string; uploadId?: string; uploadName?: string; uploadThumb?: string; source?: { projectId: string; title: string; thumbUrl: string } }) {
+  async function runAppend(params: { projectId: string; prompt?: string; uploadId?: string; uploadName?: string; uploadThumb?: string; source?: { projectId: string; title: string; thumbUrl: string } }, attach?: string) {
     const { projectId, source } = params;
     pauseQuietly();
     const controller = editAbort.begin();
@@ -893,7 +948,7 @@ export function useStudio() {
       context: source ? "Append shot · from history" : params.uploadId ? `Append shot · ${params.uploadName ?? "uploaded clip"}` : "Append shot",
       thumbUrl: source?.thumbUrl || params.uploadThumb,
     };
-    startThreadOp(userEntry, detail, () => void runAppend(params));
+    startThreadOp(userEntry, detail, () => void runAppend(params), { append: true });
     setEditingAt(project?.durationSeconds ?? 0);
     setBusy({ label: "Appending to your video", detail });
     setError(null);
@@ -906,7 +961,11 @@ export function useStudio() {
         if (params.uploadId) body.uploadId = params.uploadId;
         if (params.prompt) body.prompt = params.prompt;
       }
-      const { ok, status, result } = await streamJson<AppendResult>(`/api/projects/${encodeURIComponent(projectId)}/append`, body, (event) => applyLiveEvent(userEntry.id, event), controller.signal, (code) => `Append unavailable (HTTP ${code}). The server endpoint isn't ready yet.`);
+      const { ok, status, result } = await runJob<AppendResult>(`/api/projects/${encodeURIComponent(projectId)}/append`, body, (event, at) => applyLiveEvent(userEntry.id, event, at), controller.signal, {
+        attach,
+        meta: { kind: "append", projectId, prompt: userEntry.text, op: params },
+        nonJsonError: (code) => `Append unavailable (HTTP ${code}). The server endpoint isn't ready yet.`,
+      });
       if (!ok) {
         console.error(`[editor] append failed with HTTP ${status}`, result);
         throw new Error(errorMessage(result, status === 422 ? "Append isn't supported for this project." : `Could not append the shot (HTTP ${status}).`));
@@ -936,6 +995,7 @@ export function useStudio() {
           afterUrl: appended?.imageUrl,
           enhancedPrompt,
           ragSources: ragLabels(result.ragSources),
+          memorySources: memoryChips(result.memorySources),
         },
       ]);
       if (openProjectIdRef.current !== projectId) return;
@@ -944,6 +1004,7 @@ export function useStudio() {
       setProject(updated);
       setEditedNote("Shot appended · video re-rendered");
       setGrab({ key: ++grabKeyRef.current, atSec: startSec, thumbUrl: appended?.imageUrl ?? null, captured: false });
+      flashRange({ startSec, endSec: updated.durationSeconds });
       setIsPlaying(false);
       setVideoDuration(0);
       seekOnLoadRef.current = startSec;
@@ -986,32 +1047,31 @@ export function useStudio() {
     setConfirmRemoveFrame(null);
   }
 
-  type MutateOptions = { projectId: string; url: string; method: "POST" | "DELETE"; body?: unknown; busy: BusyState; note: string; seekSec: number; failure: string; cancelled: string; userText: string; context: string; thumbUrl?: string };
+  type MutateOptions = { projectId: string; url: string; method: "POST" | "DELETE"; body?: unknown; busy: BusyState; note: string; seekSec: number; failure: string; cancelled: string; userText: string; context: string; thumbUrl?: string; window?: TimeWindow };
 
   /** Runs a structural edit (cut a range / remove a shot) that returns the updated project. */
-  async function mutateProject(options: MutateOptions) {
+  async function mutateProject(options: MutateOptions, attach?: string) {
     const { projectId } = options;
     pauseQuietly();
     disarmConfirm();
     const controller = editAbort.begin();
     const userEntry: ThreadEntry = { id: nextThreadId("user"), role: "user", text: options.userText, at: nowIso(), context: options.context, thumbUrl: options.thumbUrl };
-    startThreadOp(userEntry, options.busy.detail, () => void mutateProject(options));
+    startThreadOp(userEntry, options.busy.detail, () => void mutateProject(options), { window: options.window ?? null });
     setEditingAt(options.seekSec);
     setBusy(options.busy);
     setError(null);
     setNotice(null);
     setEditedNote(null);
     try {
-      const response = await fetch(options.url, {
+      const { ok, status, result } = await runJob<{ project?: unknown; removed?: unknown; error?: unknown }>(options.url, options.body, (event, at) => applyLiveEvent(userEntry.id, event, at), controller.signal, {
+        attach,
         method: options.method,
-        headers: options.body === undefined ? userHeaders() : { ...userHeaders(), "Content-Type": "application/json" },
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
-        signal: controller.signal,
+        meta: { kind: "mutate", projectId, prompt: options.userText, op: options },
+        nonJsonError: (code) => `${options.failure} (HTTP ${code}). The server endpoint isn't ready yet.`,
       });
-      const result = await readJson<{ project?: unknown; removed?: unknown; error?: unknown }>(response, `${options.failure} (HTTP ${response.status}). The server endpoint isn't ready yet.`);
-      if (!response.ok) {
-        console.error(`[editor] ${options.method} ${options.url} failed with HTTP ${response.status}`, result);
-        throw new Error(errorMessage(result, `${options.failure} (HTTP ${response.status}).`));
+      if (!ok) {
+        console.error(`[editor] ${options.method} ${options.url} failed with HTTP ${status}`, result);
+        throw new Error(errorMessage(result, `${options.failure} (HTTP ${status}).`));
       }
       if (!isProject(result.project)) throw new Error("The server did not return the updated project.");
       const updated = result.project;
@@ -1074,6 +1134,7 @@ export function useStudio() {
       failure: "Could not remove that range",
       cancelled: "Remove cancelled",
       userText: `Remove ${formatWindow(cut)}`,
+      window: cut,
       context: `Removed ${length}s`,
       thumbUrl: grab?.thumbUrl ?? undefined,
     });
@@ -1096,6 +1157,7 @@ export function useStudio() {
       failure: "Could not remove that shot",
       cancelled: "Remove cancelled",
       userText: `Remove shot ${frame.index + 1}`,
+      window: { startSec: frame.startSec, endSec: frame.startSec + frame.durationSec },
       context: `Removed ${frame.durationSec.toFixed(1)}s · ${span}`,
       thumbUrl: frame.imageUrl,
     });
@@ -1143,7 +1205,7 @@ export function useStudio() {
     });
   }
 
-  async function runCommand(params: { projectId: string; message: string; atSec: number; atEnd: boolean; window: TimeWindow | null; frameIndex: number; thumbUrl?: string | null; previousDuration: number; uploadId?: string; uploadName?: string; source?: { projectId: string; title: string } }) {
+  async function runCommand(params: { projectId: string; message: string; atSec: number; atEnd: boolean; window: TimeWindow | null; frameIndex: number; thumbUrl?: string | null; previousDuration: number; uploadId?: string; uploadName?: string; source?: { projectId: string; title: string } }, attach?: string) {
     const { projectId, message, window: requestedWindow, source } = params;
     pauseQuietly();
     const controller = editAbort.begin();
@@ -1157,7 +1219,7 @@ export function useStudio() {
       context,
       thumbUrl: params.thumbUrl ?? undefined,
     };
-    startThreadOp(userEntry, detail, () => void runCommand(params));
+    startThreadOp(userEntry, detail, () => void runCommand(params), requestedWindow ? { window: requestedWindow } : { append: params.atEnd || Boolean(params.uploadId || source) });
     setEditingAt(params.atSec);
     if (requestedWindow) setRange(requestedWindow);
     setBusy({ label: "Working on your video", detail });
@@ -1173,7 +1235,11 @@ export function useStudio() {
       }
       if (params.uploadId) body.uploadId = params.uploadId;
       if (source) body.sourceProjectId = source.projectId;
-      const { ok, status, result } = await streamJson<CommandResult>(`/api/projects/${encodeURIComponent(projectId)}/command`, body, (event) => applyLiveEvent(userEntry.id, event), controller.signal, (code) => `Auto mode unavailable (HTTP ${code}). The server endpoint isn't ready yet.`);
+      const { ok, status, result } = await runJob<CommandResult>(`/api/projects/${encodeURIComponent(projectId)}/command`, body, (event, at) => applyLiveEvent(userEntry.id, event, at), controller.signal, {
+        attach,
+        meta: { kind: "command", projectId, prompt: userEntry.text, op: params },
+        nonJsonError: (code) => `Auto mode unavailable (HTTP ${code}). The server endpoint isn't ready yet.`,
+      });
       if (!ok) {
         console.error(`[editor] command failed with HTTP ${status}`, result);
         throw new Error(errorMessage(result, `Could not work out what to do (HTTP ${status}).`));
@@ -1181,6 +1247,23 @@ export function useStudio() {
       if (!isProject(result.project)) throw new Error("The server did not return the updated project.");
       const updated = result.project;
       const action = typeof result.action === "string" ? result.action : "answer";
+      if (action === "new_video") {
+        // Nothing changed: offer to start the new video instead (see ChatThread's suggestion buttons).
+        const raw = (result.suggestion ?? {}) as { preset?: unknown; prompt?: unknown };
+        const suggestion: NewVideoSuggestion = {
+          preset: raw.preset === "company" || raw.preset === "ad" ? raw.preset : "clip",
+          prompt: typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : message,
+        };
+        const reply = typeof result.reply === "string" && result.reply.trim() ? result.reply.trim() : "This sounds like a new video rather than a change to this one.";
+        addLocalThread(projectId, [
+          { ...userEntry, id: nextThreadId("local") },
+          { id: nextThreadId("local"), role: "assistant", text: reply, at: nowIso(), action: { label: "✦ New video", detectedBy: result.detectedBy === "rules" ? "rules" : "llm" }, suggestion },
+        ]);
+        if (openProjectIdRef.current !== projectId) return;
+        setPendingOp(null);
+        retryRef.current = null;
+        return;
+      }
       const changed = action !== "answer";
       if (changed) {
         updateHistory((items) => items.map((item) => item.projectId === projectId ? {
@@ -1219,6 +1302,7 @@ export function useStudio() {
           afterUrl: action === "edit_range" ? editedFrame?.imageUrl : firstAppended?.imageUrl,
           enhancedPrompt: typeof result.enhancedPrompt === "string" && result.enhancedPrompt.trim() ? result.enhancedPrompt.trim() : undefined,
           ragSources: ragLabels(result.ragSources),
+          memorySources: memoryChips(result.memorySources),
         },
       ]);
       if (openProjectIdRef.current !== projectId) return;
@@ -1248,6 +1332,7 @@ export function useStudio() {
         setEditedNote(action === "append_shot" ? `Extended +${added.toFixed(1)}s · video re-rendered` : "Clip appended · video re-rendered");
         setRange(null);
         setGrab({ key: ++grabKeyRef.current, atSec: startSec, thumbUrl: firstAppended?.imageUrl ?? null, captured: false });
+        flashRange({ startSec, endSec: updated.durationSeconds });
         seekOnLoadRef.current = startSec;
         setCurrentTime(startSec);
       }
@@ -1265,6 +1350,137 @@ export function useStudio() {
       setEditingAt(null);
       setBusy(null);
     }
+  }
+
+  function flashRange(window: TimeWindow) {
+    setFlashWindow(window);
+    globalThis.setTimeout(() => setFlashWindow((current) => current === window ? null : current), 1800);
+  }
+
+  /** "Start new" on a new-video suggestion: leave the editor and submit the prompt as a new video of that kind. */
+  function startSuggestedVideo(suggestion: NewVideoSuggestion) {
+    if (isGenerating || isStartingResearch) return;
+    closeEditor();
+    setError(null);
+    setNotice(null);
+    if (suggestion.preset === "company") {
+      void researchCompanyFor("company", suggestion.prompt, false)
+        .catch(() => "")
+        .then((company) => beginResearch(suggestion.prompt, company ?? "", presetLength));
+      return;
+    }
+    setMediaType(suggestion.preset === "ad" ? "ad" : null);
+    void runGeneration(suggestion.preset === "ad" ? "ad" : "clip", suggestion.prompt, presetLength);
+  }
+
+  /* ---- Background jobs: re-attach after a reload, resume after a server restart ---- */
+
+  /** Rebuilds the UI of a stored job by re-running its action in "attach" mode (replayed events restore progress). */
+  async function restoreJob(entry: StoredJob) {
+    const op = (entry.op ?? {}) as Record<string, unknown>;
+    const openFor = (projectId: string | undefined) => {
+      if (!projectId) return false;
+      // readHistory(): on the first render useHistory() still returns the (empty) hydration snapshot.
+      const item = readHistory().find((candidate) => candidate.projectId === projectId)
+        ?? { projectId, title: "project", videoUrl: "", thumbUrl: "", durationSeconds: 0, createdAt: nowIso(), kind: "clip" as const };
+      if (openProjectIdRef.current !== projectId) void openProject(item);
+      return true;
+    };
+    switch (entry.kind) {
+      case "generation": {
+        const kind = (typeof op.kind === "string" ? op.kind : "clip") as HistoryKind;
+        return runGeneration(kind, typeof op.promptText === "string" ? op.promptText : entry.prompt, typeof op.lengthSec === "number" ? op.lengthSec : presetLength, typeof op.researchSessionId === "string" ? op.researchSessionId : undefined, entry.jobId);
+      }
+      case "upload":
+        return runUpload(op as Parameters<typeof runUpload>[0], entry.jobId);
+      case "ask":
+      case "append":
+      case "mutate":
+      case "command": {
+        // The edit shows on its project: open it and put the pending bubble (and the player's loading frame) back.
+        if (!openFor(entry.projectId)) {
+          removeStoredJob(entry.jobId);
+          return;
+        }
+        if (entry.kind === "ask") return runAsk(op as Parameters<typeof runAsk>[0], entry.jobId);
+        if (entry.kind === "append") return runAppend(op as Parameters<typeof runAppend>[0], entry.jobId);
+        if (entry.kind === "mutate") return mutateProject(op as MutateOptions, entry.jobId);
+        return runCommand(op as Parameters<typeof runCommand>[0], entry.jobId);
+      }
+      case "stories-render": {
+        // The story picker can't be rebuilt, but the rendered videos still land in history.
+        const { ok, result } = await runJob<{ projects?: unknown }>("", undefined, () => undefined, undefined, { attach: entry.jobId, meta: entry });
+        if (ok && Array.isArray(result.projects)) addStoryProjects(result.projects.filter(isProject));
+        return;
+      }
+      default:
+        removeStoredJob(entry.jobId);
+    }
+  }
+
+  useEffect(() => {
+    const sync = () => setInterruptedJobs(loadStoredJobs().filter((entry) => entry.interrupted));
+    sync();
+    return subscribeStoredJobs(sync);
+  }, []);
+
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    void (async () => {
+      // Jobs this browser started (localStorage) plus any active server job for this user it doesn't know about.
+      const stored = loadStoredJobs();
+      const active = await fetchActiveJobs().catch(() => []);
+      for (const job of active) {
+        if (stored.some((entry) => entry.jobId === job.id)) continue;
+        const kind: HistoryKind | null = job.kind === "clip" ? "clip" : job.kind === "preset" ? "ad" : job.kind === "storyboard" ? "storyboard" : job.kind === "rawtree" ? "rawtree" : null;
+        if (!kind) continue;
+        const entry: StoredJob = { jobId: job.id, kind: "generation", prompt: job.prompt ?? "", startedAt: Date.parse(job.createdAt) || Date.now(), op: { kind, promptText: job.prompt ?? "", lengthSec: presetLength } };
+        saveStoredJob(job.status === "interrupted" ? { ...entry, interrupted: true } : entry);
+        stored.push(job.status === "interrupted" ? { ...entry, interrupted: true } : entry);
+      }
+      const checked = await Promise.all(stored.map(async (entry) => ({ entry, snapshot: await fetchJob(entry.jobId).catch(() => undefined) })));
+      const live: StoredJob[] = [];
+      const finished: StoredJob[] = [];
+      for (const { entry, snapshot } of checked) {
+        if (snapshot === undefined) continue; // server unreachable: try again next load
+        if (snapshot === null || snapshot.status === "cancelled") removeStoredJob(entry.jobId);
+        else if (snapshot.status === "interrupted") updateStoredJob(entry.jobId, { interrupted: true });
+        else if (snapshot.status === "done" || snapshot.status === "error") finished.push(entry);
+        else live.push(entry);
+      }
+      // Results that arrived while the tab was closed: apply them (history item / project update), then note it.
+      for (const entry of finished.sort((a, b) => a.startedAt - b.startedAt)) {
+        await restoreJob(entry);
+        setNotice("Finished while you were away");
+      }
+      // Running jobs: the newest generation and the newest edit get their live UI back (one of each can show).
+      const newest = (kinds: string[]) => live.filter((entry) => kinds.includes(entry.kind)).sort((a, b) => b.startedAt - a.startedAt)[0];
+      const generation = newest(["generation", "upload"]);
+      const edit = newest(["ask", "append", "mutate", "command"]);
+      const other = live.filter((entry) => !["generation", "upload", "ask", "append", "mutate", "command"].includes(entry.kind));
+      if (generation) void restoreJob(generation);
+      if (edit) void restoreJob(edit);
+      other.forEach((entry) => void restoreJob(entry));
+    })();
+    // Runs once per page load; restoreJob reads the latest state through refs/history at call time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function resumeInterruptedJob(entry: StoredJob) {
+    setError(null);
+    try {
+      await resumeServerJob(entry.jobId);
+      updateStoredJob(entry.jobId, { interrupted: false });
+      await restoreJob({ ...entry, interrupted: false });
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Could not resume the job.");
+    }
+  }
+
+  function dismissInterruptedJob(entry: StoredJob) {
+    void cancelServerJob(entry.jobId);
+    removeStoredJob(entry.jobId);
   }
 
   function pickSourceProject(item: HistoryItem) {
@@ -1319,12 +1535,14 @@ export function useStudio() {
 
   return {
     // generation / composer
-    prompt, setPrompt, isGenerating, generatingKind, generationLive, isStartingResearch,
-    research, createVideoFromResearch, dismissResearch: () => setActiveResearch(null), error, notice, narrationMessages,
+    prompt, setPrompt, isGenerating, generatingKind, generationLive, generatingPrompt, isStartingResearch,
+    interruptedJobs, resumeInterruptedJob, dismissInterruptedJob, startSuggestedVideo,
+    research, createVideoFromResearch, approveStoryline, dismissResearch: () => setActiveResearch(null), error, notice, narrationMessages,
     marketRun, isMarketRunning, dismissMarket: market.dismiss,
     retryMarketRender: () => { if (marketRun?.view?.storyboard_id && !isGenerating) void renderMarket(marketRun.id, marketRun.view.storyboard_id); },
     mediaType, isMediaMenuOpen, setIsMediaMenuOpen, selectMediaType, storyboardFileName, storyboardError, selectStoryboard,
     presetLength, setPresetLength, clipCopy, canSubmit, submitComposer, promptInputRef,
+    stories, storyCount, setStoryCount, storyLength, setStoryLength,
     cancelGeneration: generationAbort.abort, cancelEdit: editAbort.abort,
     // history
     history, isHistoryOpen, setHistoryOpen, openProject,

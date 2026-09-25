@@ -44,6 +44,7 @@ class AgentSettings:
     research_observation_chars: int = 16000  # one tool result shown to Liquid
     research_context_chars: int = 120000   # all observations kept in one round's conversation (older ones elided)
     research_reasoning: str = "medium"     # OpenRouter reasoning effort: low | medium | high
+    research_parallel: int = 3             # Liquid page extractions / competitors worked on at the same time
 
     @property
     def llm_enabled(self):
@@ -79,6 +80,7 @@ def load_settings(**overrides) -> AgentSettings:
         research_context_chars=_int("RESEARCH_CONTEXT_CHARS", 120000, 4000, 180000),
         research_reasoning=os.environ.get("RESEARCH_REASONING", "").strip().lower() if os.environ.get(
             "RESEARCH_REASONING", "").strip().lower() in ("low", "medium", "high") else "medium",
+        research_parallel=_int("RESEARCH_PARALLEL", 3, 1, 4),
     )
     values.update({k: v for k, v in overrides.items() if v is not None})
     return AgentSettings(**values)

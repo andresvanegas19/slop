@@ -1,6 +1,7 @@
 """Research sessions, offline: a fixture website behind httpx.MockTransport, a scripted fake Liquid, a fake RawTree."""
 import json
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -16,7 +17,8 @@ from agent.research import MAX_CONCURRENT_SESSIONS, ResearchManager, fallback_in
 from agent.research_store import ResearchStore
 from agent.research_tools import ResearchTools
 from agent.store import AgentStore
-from agent.web import USER_AGENT, WebFetcher, extract, parse_robots, robots_allows, slugs
+from agent.web import (USER_AGENT, Page, WebFetcher, extract, home_guard, home_problem, parse_robots, robots_allows,
+                       slugs)
 from agent.worker import AgentWorker, serve
 from contracts import TABLES
 
@@ -263,6 +265,105 @@ def test_unknown_website_is_an_error(settings):
     assert view["status"] == "error" and "website" in view["error"]
 
 
+def test_home_problem_spots_parked_domains_and_other_companies():
+    names = {"linear"}
+    listing = Page(url="https://www.namepros.com/parked/linear.co", status=200, title="Linear.co for sale")
+    assert home_problem("https://www.linear.co/", listing, names) == "parked domain"
+    rendered = Page(url="https://linear.io/", status=200, title="Linear.io", text="linear.io is for sale! Make an offer")
+    assert home_problem("https://linear.io/", rendered, names) == "domain for sale"
+    analog = Page(url="https://www.analog.com/", status=200, title="Analog Devices", text="Linear Technology")
+    assert home_problem("https://www.linear.com/", analog, names) == "redirects to analog.com"
+    nimble = Page(url="https://www.linear.com/", status=200, title="Analog Devices",  # browser-rendered redirect
+                  canonical="https://www.analog.com/en/index.html")
+    assert home_problem("https://www.linear.com/", nimble, names) == "redirects to analog.com"
+    real = Page(url="https://linear.app/", status=200, title="Linear – The system for product development",
+                canonical="https://linear.app")
+    assert home_problem("https://www.linear.app/", real, names) is None
+    assert home_problem("https://coca-cola.com/", Page(url="https://www.coca-colacompany.com/", status=200),
+                        {"cocacola"}) is None
+    assert home_problem("https://www.jira.com/", Page(url="https://www.atlassian.com/software/jira", status=200),
+                        {"jira"}) is None
+    guard = home_guard("https://www.linear.co/", names)
+    assert guard("https://linear.co/") and not guard("https://www.namepros.com/parked/linear.co")
+    assert not guard("https://www.analog.com/") and home_guard("https://jira.com/", {"jira"})(
+        "https://www.atlassian.com/software/jira")
+    assert extract("https://linear.app/", '<html><head><link rel="canonical" href="https://linear.app"></head>'
+                   '<body>Linear</body></html>').canonical == "https://linear.app/"
+
+
+def test_pages_are_read_in_parallel_with_the_same_findings(tmp_path):
+    class SlowLiquid(FakeLiquid):
+        active = peak = 0
+        lock = threading.Lock()
+
+        def reply(self, messages, text):
+            if "[task:extract]" not in text:
+                return super().reply(messages, text)
+            with SlowLiquid.lock:
+                SlowLiquid.active += 1
+                SlowLiquid.peak = max(SlowLiquid.peak, SlowLiquid.active)
+            time.sleep(0.2)
+            with SlowLiquid.lock:
+                SlowLiquid.active -= 1
+            return super().reply(messages, text)
+
+    def findings(parallel):
+        s = load_settings(state_db=str(tmp_path / "state.db"), agent_db=str(tmp_path / "p{}.db".format(parallel)),
+                          openrouter_key="", rawtree_key="", research_max_pages=6, research_max_steps=10,
+                          research_parallel=parallel)
+        fetcher = lambda: WebFetcher(httpx.Client(transport=httpx.MockTransport(site_handler([])),  # noqa: E731
+                                                  headers={"User-Agent": USER_AGENT}))
+        manager = ResearchManager(s, ResearchStore(s.agent_db), llm_factory=SlowLiquid,
+                                  outbox=AgentStore(s.agent_db), fetcher_factory=fetcher)
+        SlowLiquid.peak = 0
+        view = wait_done(manager, manager.start("Make a company video for Acme Cola", looping=False))
+        return [(f["evidence_url"], f["quote"]) for f in view["findings"]], SlowLiquid.peak
+
+    sequential, peak1 = findings(1)
+    parallel, peak3 = findings(3)
+    assert peak1 == 1 and peak3 > 1
+    assert parallel == sequential and sequential
+
+
+def test_resolve_skips_parked_and_redirected_domains(settings):
+    requests = []
+    real = ('<html><head><title>Linear – The system for product development</title>'
+            '<link rel="canonical" href="https://linear.app"></head><body><h1>Linear</h1>'
+            '<p>Linear is a purpose-built tool for planning and building products.</p></body></html>')
+
+    def handler(request: httpx.Request):
+        requests.append(str(request.url))
+        host, path = request.url.host, request.url.path
+        html = {"content-type": "text/html"}
+        if path == "/robots.txt":
+            return httpx.Response(404, text="")
+        if host in ("www.linear.com", "linear.com"):
+            return httpx.Response(301, headers={"location": "https://www.analog.com/"})
+        if host == "www.analog.com":
+            return httpx.Response(200, text="<html><title>Analog Devices</title><body>Linear Technology is now "
+                                             "part of Analog Devices.</body></html>", headers=html)
+        if host in ("www.linear.co", "linear.co"):
+            return httpx.Response(302, headers={"location": "https://www.namepros.com/parked/linear.co"})
+        if host == "www.namepros.com":
+            return httpx.Response(200, text="<html><title>Linear.co for sale</title><body>Linear.co is listed for "
+                                             "sale.</body></html>", headers=html)
+        if host in ("www.linear.io", "linear.io"):
+            return httpx.Response(200, text="<html><body></body></html>", headers=html)
+        if host == "linear.app" or host == "www.linear.app":
+            return httpx.Response(200, text=real, headers=html)
+        raise httpx.ConnectError("does not resolve", request=request)
+
+    fetcher = lambda: WebFetcher(httpx.Client(transport=httpx.MockTransport(handler),  # noqa: E731
+                                              headers={"User-Agent": USER_AGENT}))
+    manager = ResearchManager(settings, ResearchStore(settings.agent_db), llm_factory=None,
+                              outbox=AgentStore(settings.agent_db), fetcher_factory=fetcher)
+    view = wait_done(manager, manager.start("a short ad for Linear", looping=False))
+    assert view["domain"] == "linear.app" and view["home_url"].startswith("https://www.linear.app")
+    assert "https://linear.com/" not in requests and "https://linear.co/" not in requests  # twins of rejected sites
+    assert not any("analog.com" in u or "namepros.com" in u for u in requests), "blocked before fetching"
+    assert all(f["evidence_url"].startswith("https://www.linear.app") for f in view["findings"])
+
+
 def test_publish_writes_only_research_table_with_stable_ids(settings):
     rawtree = FakeRawTree()
     manager, outbox = manager_for(settings, publish=True, rawtree=rawtree)
@@ -444,7 +545,7 @@ def test_research_session_uses_past_videos(settings):
     assert json.loads(tool.invoke({}))["videos"][0]["project_id"] == "p1"
 
 
-# --- the user's own history (RawTree slop_human_user_prompts) ----------------------------------------------------------
+# --- the user's own history (RawTree slop_human_user_prompts) ------------------------------------------------------
 PROMPT_ROWS = [
     {"event_id": "e1", "user_id": "u_1", "surface": "preset", "prompt": "A nostalgic, warm 15 seconds ad for Acme Cola",
      "action": "generate", "outcome": "ok", "duration_sec": 15, "created_at": "2026-09-25 10:00:00"},
@@ -472,8 +573,8 @@ def test_user_context_summary_sql_and_missing_table(settings):
     rawtree = PromptRawTree()
     ctx = user_context(rawtree, "u_1", 15)
     assert rawtree.sql[-1].startswith("SELECT event_id, user_id, project_id, surface, prompt, action")
-    assert rawtree.sql[-1].endswith("FROM slop_human_user_prompts WHERE toString(user_id) = 'u_1' ORDER BY created_at DESC "
-                                    "LIMIT 15")
+    assert rawtree.sql[-1].endswith(
+        "FROM slop_human_user_prompts WHERE toString(user_id) = 'u_1' ORDER BY created_at DESC LIMIT 15")
     assert ctx["count"] == 2 and {"nostalgic", "warm", "cinematic", "golden hour"} <= set(ctx["style_words"])
     assert ctx["durations"][0] == "15s" and ctx["failures"][0]["error"] == "BFL 429"
     assert set(expressed_topics(ctx)) == {"tone", "format"}

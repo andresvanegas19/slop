@@ -2,7 +2,10 @@ import { createChatCompletion, openRouterModel, type ChatTool } from "@/lib/open
 import type { Project } from "@/lib/projects";
 import { logInfo } from "@/lib/runtime-log";
 
-export type IntentAction = "edit_range" | "answer" | "append_shot" | "cut_range" | "append_attachment";
+export type IntentAction = "edit_range" | "answer" | "append_shot" | "cut_range" | "append_attachment" | "new_video";
+
+/** new_video: which composer flow the suggested new video should use. */
+export type NewVideoPreset = "company" | "ad" | "clip";
 
 export type IntentParams = {
   /** edit_range: what to change. */
@@ -13,6 +16,8 @@ export type IntentParams = {
   prompt?: string;
   /** append_shot: extra time requested (1–15s). */
   seconds?: number;
+  /** new_video: suggested composer preset. */
+  preset?: NewVideoPreset;
 };
 
 export type Intent = { action: IntentAction; params: IntentParams; source: "llm" | "rules"; atEnd: boolean };
@@ -45,6 +50,29 @@ export function isAtEnd(context: Pick<IntentContext, "atSec" | "range" | "projec
 
 const EDIT_VERBS = /\b(make|change|turn|replace|remove|recolou?r|colou?r|paint|swap|edit|fix|brighten|darken|add|put|give|set|convert|transform|modify|adjust)\b/i;
 const QUESTION_START = /^(what|who|where|when|why|how|which|is|are|does|do|did|can you (tell|describe|explain)|could you (tell|describe|explain)|tell me|describe|explain)\b/i;
+
+// Explicit "don't touch the video" wording ("just a question", "do not change anything") always means answer.
+const NO_CHANGE = /\b(?:just (?:a|one) question|quick question|(?:do not|don't|dont|without|no need to) (?:change|changing|edit|editing|touch|touching|modify|modifying)\b|no changes?\b)/i;
+// A different video altogether: "new video", "make an ad for…", "my company is…".
+const NEW_VIDEO = [
+  /\b(?:a |an )?(?:new|different|separate|fresh|brand[- ]new) (?:video|ad|advert|commercial|promo|short|film)\b/i,
+  /\banother (?:video|ad|advert|commercial|promo|film)\b/i,
+  /\bstart (?:over|again|fresh)\b|\bfrom scratch\b/i,
+  /\b(?:my|our) (?:company|brand|startup|business|product|shop|store|restaurant|app)(?: name)? (?:is|'s|called|named)\b/i,
+  /\bi (?:run|own|have|founded|started) (?:a|an) (?:company|brand|startup|business|shop|store|restaurant)\b/i,
+  /\b(?:make|create|generate|produce|build|do|write)\s+(?:me\s+|us\s+)?(?:a|an)\s+(?:\d+[- ]?(?:s|sec|second)s?\s+)?(?:video|ad|advert|commercial|promo|short|film)\s+(?:for|about|of|on|showing|promoting)\b/i,
+];
+
+export function isNewVideoRequest(text: string) {
+  return NEW_VIDEO.some((pattern) => pattern.test(text));
+}
+
+/** The composer flow a new-video request fits: company short, ad, or a plain clip. */
+export function newVideoPreset(text: string): NewVideoPreset {
+  if (/\b(?:ad|ads|advert|advertisement|commercial|promo|promotional)\b/i.test(text)) return "ad";
+  if (/\b(?:my|our) (?:company|brand|startup|business)\b|\b(?:company|brand) (?:video|short|film|story)\b|\bi (?:run|own|founded|started) (?:a|an) (?:company|brand|startup|business)\b/i.test(text)) return "company";
+  return "clip";
+}
 
 function secondsRequested(text: string): number | undefined {
   const lower = text.toLowerCase();
@@ -105,6 +133,8 @@ export function ruleIntent(context: IntentContext): { action: IntentAction; para
     const clearlyEdit = hasRange && /\b(edit|change|make|replace|turn|recolou?r)\b/i.test(text) && !/\b(append|add (it|this|the video|the clip)|attach|put (it|this) (at|on) the end)\b/i.test(text);
     if (!clearlyEdit) return { action: "append_attachment", params: {}, strong: true };
   }
+  if (NO_CHANGE.test(text)) return { action: "answer", params: {}, strong: true };
+  if (isNewVideoRequest(text)) return { action: "new_video", params: { prompt: text, preset: newVideoPreset(text) }, strong: true };
   if (seconds !== undefined) return { action: "append_shot", params: { prompt: shotPromptFrom(text), seconds }, strong: true };
   // Without a range this still resolves to cut_range so /command can ask the user to select one (422).
   if (CUT.test(text)) return { action: "cut_range", params: {}, strong: true };
@@ -154,6 +184,21 @@ function tools(context: IntentContext): ChatTool[] {
       },
     },
   ];
+  list.push({
+    type: "function",
+    function: {
+      name: "new_video",
+      description: "The message asks for a DIFFERENT, new video rather than changing this one (e.g. 'my company is Acme and I want a video of…', 'make an ad for my shoes', 'new video: a cat surfing'), or describes a subject unrelated to this video's title and shots.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "The new video's prompt, in the user's words." },
+          preset: { type: "string", enum: ["company", "ad", "clip"], description: "company = a video about the user's company/brand; ad = an ad/commercial/promo; clip = anything else." },
+        },
+        required: ["prompt"],
+      },
+    },
+  });
   if (context.range) {
     list.push({
       type: "function",
@@ -188,6 +233,7 @@ function systemPrompt(context: IntentContext, atEnd: boolean) {
     "- append_shot: add new time at the end (extend, continue, 'then…', 'N seconds longer', new action or content).",
     context.range ? "- cut_range: remove the selected range." : undefined,
     context.hasAttachment ? "- append_attachment: the user attached a video; add it to the end." : undefined,
+    "- new_video: the user wants a different, NEW video (introduces their company/product, asks for an ad or video for something, or describes a subject unrelated to this video). Editing wording about what is on screen stays edit_range.",
     `Video: "${context.project.title}", ${context.project.durationSeconds}s long, ${context.project.frames.length} shot(s). ${selection}`,
     context.framePrompt ? `Selected shot description: ${context.framePrompt.slice(0, 400)}` : undefined,
     atEnd
@@ -205,7 +251,7 @@ function safeJson(text: string): unknown {
   }
 }
 
-const ACTIONS: IntentAction[] = ["edit_range", "answer", "append_shot", "cut_range", "append_attachment"];
+const ACTIONS: IntentAction[] = ["edit_range", "answer", "append_shot", "cut_range", "append_attachment", "new_video"];
 
 /** Parses tool calls from structured tool_calls, pythonic `name(k="v")` text, or JSON text. */
 function parseCall(toolCalls: { function?: { name?: string; arguments?: string } }[], content: string) {
@@ -214,7 +260,7 @@ function parseCall(toolCalls: { function?: { name?: string; arguments?: string }
     const args = typeof structured.function?.arguments === "string" ? safeJson(structured.function.arguments) : undefined;
     return { name: structured.function?.name as IntentAction, args: (args && typeof args === "object" ? args : {}) as Record<string, unknown> };
   }
-  const pythonic = content.match(/\b(edit_range|answer|append_shot|cut_range|append_attachment)\s*\(([\s\S]*?)\)/);
+  const pythonic = content.match(/\b(edit_range|answer|append_shot|cut_range|append_attachment|new_video)\s*\(([\s\S]*?)\)/);
   if (pythonic) {
     const args: Record<string, unknown> = {};
     for (const match of pythonic[2].matchAll(/(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(-?\d+(?:\.\d+)?))/g)) {
@@ -247,7 +293,10 @@ function text(value: unknown, max = 1_000) {
 export async function detectIntent(context: IntentContext): Promise<Intent> {
   const atEnd = isAtEnd(context);
   const rules = ruleIntent(context);
-  const fromRules = (): Intent => ({ action: rules.action, params: { ...rules.params }, source: "rules", atEnd });
+  const fromRules = (): Intent => {
+    logInfo("intent_detected", { action: rules.action, detectedBy: "rules", strong: rules.strong, atEnd });
+    return { action: rules.action, params: { ...rules.params }, source: "rules", atEnd };
+  };
   if (rules.strong || context.useLlm === false) return fromRules();
 
   try {
@@ -276,7 +325,12 @@ export async function detectIntent(context: IntentContext): Promise<Intent> {
       const seconds = typeof call.args.seconds === "number" ? call.args.seconds : Number(call.args.seconds);
       if (Number.isFinite(seconds) && seconds > 0) params.seconds = clampSeconds(seconds);
     }
-    logInfo("intent_detected", { action: call.name, source: "llm", atEnd });
+    if (call.name === "new_video") {
+      params.prompt = text(call.args.prompt, 4_000) || context.message.trim();
+      const preset = call.args.preset;
+      params.preset = preset === "company" || preset === "ad" || preset === "clip" ? preset : newVideoPreset(context.message);
+    }
+    logInfo("intent_detected", { action: call.name, detectedBy: "llm", atEnd });
     return { action: call.name, params, source: "llm", atEnd };
   } catch (error) {
     logInfo("intent_llm_failed", { reason: error instanceof Error ? error.message.slice(0, 200) : String(error) });

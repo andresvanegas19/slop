@@ -11,7 +11,7 @@ export const USER_PROMPTS_TABLE = "slop_human_user_prompts";
 export const ANONYMOUS_USER = "anonymous";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_CHARS = 1_200;
-const CACHE_MS = 30_000;
+const CACHE_MS = 30 * 1000;
 const RECENT_PROMPTS = 15;
 
 /** Accepts the X-Longform-User header only when it is a UUID (lowercased); anything else is "anonymous". */

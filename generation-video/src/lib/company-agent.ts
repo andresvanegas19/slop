@@ -1,6 +1,6 @@
 import { loadEnvConfig } from "@next/env";
 import path from "node:path";
-import { logInfo } from "@/lib/runtime-log";
+import { currentTrace, logInfo } from "@/lib/runtime-log";
 
 /**
  * Client for the local Python company agent (`python -m agent worker`, see agent/README.md).
@@ -55,7 +55,7 @@ export async function getCompanyContext(prompt: string, kind: CompanyKind): Prom
   try {
     const response = await fetch(new URL("/context", config.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(currentTrace() ? { "X-Trace-Id": currentTrace()!.traceId } : {}) },
       body: JSON.stringify({ prompt: prompt.slice(0, 32_000), kind }),
       signal: AbortSignal.timeout(config.timeoutMs),
       cache: "no-store",

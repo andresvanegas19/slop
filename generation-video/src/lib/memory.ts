@@ -291,6 +291,7 @@ function decayed(candidate: Candidate) {
 
 /** Retrieves memory for an LLM call; user/project/research session default to the current request's (never throws). */
 export async function retrieveMemory(query: string, options: MemoryOptions = {}): Promise<MemoryContext> {
+  const startedAt = Date.now();
   try {
     const request = currentUser();
     const userId = options.userId ?? request?.userId;
@@ -309,7 +310,10 @@ export async function retrieveMemory(query: string, options: MemoryOptions = {})
       wants("video") ? videoCandidates(q, { ...options, projectId }) : Promise.resolve([]),
       wants("user_prompt") && userId ? userPromptCandidates(q, userId, projectId) : Promise.resolve([]),
       wants("research") && researchSessionId && SAFE_ID.test(researchSessionId) ? researchCandidates(q, researchSessionId) : Promise.resolve([]),
-    ].map((promise) => promise.catch(() => [] as Candidate[])));
+    ].map((promise) => promise.catch((error: unknown) => {
+      logInfo("memory_source_failed", { reason: error instanceof Error ? error.message.slice(0, 200) : String(error) });
+      return [] as Candidate[];
+    })));
 
     const ranked = groups.flat().map((candidate) => ({ candidate, value: decayed(candidate) })).sort((a, b) => b.value - a.value);
     if (!ranked.length) return { text: "", sources: [] };
@@ -344,6 +348,8 @@ export async function retrieveMemory(query: string, options: MemoryOptions = {})
         score: Math.round(value * 1000) / 1000,
       });
     }
+    const byKind = sources.reduce<Record<string, number>>((counts, source) => ({ ...counts, [source.kind]: (counts[source.kind] ?? 0) + 1 }), {});
+    logInfo("memory_retrieved", { candidates: ranked.length, sources: sources.length, byKind: Object.entries(byKind).map(([kind, count]) => `${kind}:${count}`).join(","), chars: lines.reduce((sum, line) => sum + line.length + 1, HEADER.length), query: q, durationMs: Date.now() - startedAt });
     if (!lines.length) return { text: "", sources: [] };
     return { text: `${HEADER}\n${lines.join("\n")}`, sources };
   } catch (error) {

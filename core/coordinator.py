@@ -9,6 +9,7 @@
            -> market mode: VideoStoryboard -> SQLite + outbox (slop_human_video_storyboards)
            -> RunRecord -> outbox -> (optional) deliver to RawTree
 """
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
@@ -16,6 +17,7 @@ from typing import List, Optional, Tuple
 from contracts import (TABLES, EventType, MarketDevelopment, OutboxEvent, Patch, PatchDecision, PatchOrigin,
                        RunRecord, SourceType, Storyboard, StoryboardRecord, VideoStoryboard, VideoStoryboardRecord)
 
+from .logs import event
 from .market import MARKET_SOURCES, MarketAnalyzer, evidence_ref
 from .reducer import ExpiryWorker, Reducer, patch_event
 from .repository import StateRepository
@@ -23,6 +25,8 @@ from .state_machine import PatchBuilder
 from .storyboard import StoryboardComposer, is_meaningful
 from .validator import PatchValidator
 from .video_storyboard import compose_market_storyboard
+
+log = logging.getLogger("core.coordinator")
 
 
 def _event(kind, table, key, payload):
@@ -185,6 +189,9 @@ class Coordinator:
                                      "active_beliefs": len(self.repo.active_beliefs()),
                                      "state_tokens": self.repo.state_tokens()})
         self.repo.enqueue(_event(EventType.run, TABLES["run"], run.run_id, run.model_dump(mode="json")))
+        event(log, "core_cycle_done", runId=run.run_id, pages=run.pages_fetched, opsProposed=run.ops_proposed,
+              opsAccepted=run.ops_accepted, opsRejected=run.ops_rejected, storyboard=bool(storyboard),
+              durationMs=int((run.finished_at - now).total_seconds() * 1000) if run.finished_at else None)
         return CycleOutcome(run=run, storyboard=storyboard, decisions=decisions, accepted=accepted,
                             developments=developments, video_storyboard=video, video_record=record)
 

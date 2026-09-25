@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -7,7 +8,7 @@ import { logError, logInfo, logException } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+async function routePOST(request: Request) {
   try {
     const body = await request.json() as { prompt?: unknown; shotId?: unknown };
     if (typeof body.prompt !== "string" || body.prompt.trim().length === 0 || body.prompt.length > 32_000) {
@@ -43,3 +44,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = withRouteLog(routePOST);

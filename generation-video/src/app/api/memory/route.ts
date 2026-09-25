@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { retrieveMemory, type MemoryKind } from "@/lib/memory";
 import { parseUserId } from "@/lib/user-context";
@@ -10,7 +11,7 @@ const KINDS: MemoryKind[] = ["knowledge", "video", "user_prompt", "research", "e
  * Debug: GET `?q=&userId=&projectId=&researchSessionId=&k=&maxChars=&tags=a,b&kinds=knowledge,video` → `{ text, sources }`,
  * exactly what the LLM calls receive. `userId` falls back to the X-Longform-User header.
  */
-export async function GET(request: Request) {
+async function routeGET(request: Request) {
   const url = new URL(request.url);
   const query = url.searchParams.get("q")?.trim();
   if (!query) return NextResponse.json({ error: "Missing q parameter." }, { status: 400 });
@@ -32,3 +33,5 @@ export async function GET(request: Request) {
   });
   return NextResponse.json({ userId, ...memory }, { headers: { "Cache-Control": "no-store" } });
 }
+
+export const GET = withRouteLog(routeGET);

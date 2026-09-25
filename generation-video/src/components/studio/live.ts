@@ -57,3 +57,8 @@ export function videoFraction(live: LiveProgress): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return Math.min(1, Math.max(0, value > 1 ? value / 100 : value));
 }
+
+/** Step labels from the server may already end in an ellipsis; strip it so we never render "……". */
+export function stepText(label: string) {
+  return label.replace(/(?:\.{2,}|…)+\s*$/, "");
+}

@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -25,7 +26,7 @@ async function downloadImage(url: string) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-export async function POST(request: Request) {
+async function routePOST(request: Request) {
   let concatList: string | undefined;
   try {
     const body = await request.json() as { prompt?: unknown };
@@ -83,3 +84,5 @@ export async function POST(request: Request) {
     if (concatList) await rm(concatList, { force: true });
   }
 }
+
+export const POST = withRouteLog(routePOST);

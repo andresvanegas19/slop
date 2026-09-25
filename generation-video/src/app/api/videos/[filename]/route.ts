@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -11,7 +12,7 @@ const baseHeaders = {
 };
 
 // Safari only plays <video> when the server answers byte-range requests with 206 Partial Content.
-export async function GET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
+async function routeGET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
   const { filename } = await params;
   if (!/^[a-zA-Z0-9-]+\.mp4$/.test(filename)) return new NextResponse(null, { status: 400 });
   let asset: Buffer;
@@ -45,3 +46,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     },
   });
 }
+
+export const GET = withRouteLog(routeGET);

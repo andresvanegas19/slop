@@ -45,6 +45,9 @@ class CompetitiveLandscape(BaseModel):
     differentiators: list[SourcedText] = []     # the company's own strengths, citing the company's findings
     competitor_themes: list[str] = []           # what competitors emphasise (internal, no names)
     avoid_terms: list[str] = []                 # competitor names and domain labels
+    pages: int = 0
+    llm_calls: int = 0
+    tokens: int = 0
     version: int = 0
     updated_at: datetime
     model: str = "deterministic"

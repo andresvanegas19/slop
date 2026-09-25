@@ -26,7 +26,9 @@ export async function respondMaybeStreaming(request: Request, run: (emit: Emit) 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const write = (event: object) => {
-        if (closed) return;
+        // Job-internal bookkeeping (BFL polling URLs, LLM memo) is never sent to clients.
+        const type = (event as { type?: unknown }).type;
+        if (closed || type === "bfl_pending" || type === "memo") return;
         try {
           controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         } catch {

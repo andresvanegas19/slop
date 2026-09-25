@@ -3,7 +3,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import type { RefObject, SyntheticEvent } from "react";
 import BlobLoader from "@/components/BlobLoader";
-import type { BusyState, FrameGrab } from "./types";
+import { useNow } from "./LiveStatus";
+import { stepText } from "./live";
+import type { BusyState, FrameGrab, LiveProgress } from "./types";
 import { CANCEL_BUTTON, cn, fadeUp, spring } from "./ui";
 
 type PlayerProps = {
@@ -22,6 +24,9 @@ type PlayerProps = {
   onGrab: () => void;
   isEditing: boolean;
   busy: BusyState | null;
+  /** Streamed progress of the running edit (steps, preview) and the frame it changes (shown blurred underneath). */
+  pendingLive?: LiveProgress | null;
+  pendingImage?: string | null;
   onCancelEdit: () => void;
   editedNote: string | null;
   onLoadedMetadata: (event: SyntheticEvent<HTMLVideoElement>) => void;
@@ -31,6 +36,55 @@ type PlayerProps = {
   onEnded: () => void;
   onSeeked: () => void;
 };
+
+function elapsedLabel(ms: number) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return total >= 60 ? `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s` : `${total}s`;
+}
+
+/**
+ * Loading frame over the player while an edit runs: the frame being changed (blurred + dimmed), the loader with the
+ * live step + elapsed time, the job's preview image fading in when it arrives, and Cancel. Clicks pass through to the
+ * video (only Cancel is interactive), and playing the old video lifts the dimming.
+ */
+function EditOverlay({ busy, live, image, isPlaying, onCancel }: { busy: BusyState | null; live: LiveProgress | null; image: string | null; isPlaying: boolean; onCancel: () => void }) {
+  const now = useNow(true);
+  const step = live?.steps[live.steps.length - 1];
+  const elapsed = live ? elapsedLabel(now - live.startedAt) : null;
+  const detail = step ? `${stepText(step.label)}…${elapsed ? ` · ${elapsed}` : ""}` : busy?.detail ?? "Regenerating the frame and re-rendering…";
+  const preview = live?.preview?.imageUrl ?? null;
+  return (
+    <motion.div
+      key="overlay"
+      className="pointer-events-none absolute inset-0 z-3 overflow-hidden rounded-[13px]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.45 } }}
+      transition={{ duration: 0.25 }}
+      aria-live="polite"
+    >
+      <motion.div className="absolute inset-0" animate={{ opacity: isPlaying ? 0.15 : 1 }} transition={{ duration: 0.3 }}>
+        {image && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="absolute inset-0 h-full w-full scale-110 object-cover blur-[14px] brightness-[.5]" src={image} alt="" />
+        )}
+        <div className="absolute inset-0 bg-[#050505b3]" />
+        <AnimatePresence>
+          {preview && (
+            <motion.img key={preview} className="absolute inset-0 h-full w-full object-contain" src={preview} alt={live?.preview?.label ?? "Preview"} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 0.55, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.6, ease: "easeOut" }} />
+          )}
+        </AnimatePresence>
+      </motion.div>
+      <div className="relative grid h-full place-items-center">
+        <div className="grid justify-items-center max-[760px]:scale-60">
+          <BlobLoader label={busy?.label ?? "Updating your video"} detail={detail} size={180} />
+          {preview && <span className="mt-1 text-[10px] text-[#9fb0d6]">{live?.preview?.label ?? "Preview"} ready</span>}
+          <button type="button" className={cn(CANCEL_BUTTON, "pointer-events-auto")} onClick={(event) => { event.stopPropagation(); onCancel(); }}>Cancel</button>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 /** The video stage (with grab flash, busy overlay and edited note) plus the play / sound / grab controls. */
 export default function Player(props: PlayerProps) {
@@ -43,8 +97,11 @@ export default function Player(props: PlayerProps) {
         aria-label="Video player. Space plays or pauses; left and right arrows step one frame."
         onClick={(event) => { if (event.target === event.currentTarget || event.target === videoRef.current) props.onTogglePlay(); }}
       >
-        <video
+        <motion.video
           key={props.videoKey}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
           ref={videoRef}
           className="block h-full max-h-full w-full rounded-[13px] bg-black object-contain"
           src={props.src}
@@ -70,22 +127,7 @@ export default function Player(props: PlayerProps) {
           />
         )}
         <AnimatePresence>
-          {isEditing && (
-            <motion.div
-              key="overlay"
-              className="absolute inset-0 grid place-items-center rounded-[13px] bg-[#050505d9] backdrop-blur-[3px]"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="grid justify-items-center max-[760px]:scale-60">
-                <BlobLoader label={busy?.label ?? "Updating your video"} detail={busy?.detail ?? "Regenerating the frame and re-rendering…"} size={200} />
-                <button type="button" className={CANCEL_BUTTON} onClick={props.onCancelEdit}>Cancel</button>
-              </div>
-            </motion.div>
-          )}
+          {isEditing && <EditOverlay busy={busy} live={props.pendingLive ?? null} image={props.pendingImage ?? null} isPlaying={props.isPlaying} onCancel={props.onCancelEdit} />}
         </AnimatePresence>
         <AnimatePresence>
           {!isEditing && editedNote && (

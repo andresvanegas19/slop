@@ -1,5 +1,7 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { forwardedUser, jsonBody, proxyJson } from "@/lib/research-agent";
+import { logUserPrompt } from "@/lib/user-prompts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +13,7 @@ const MAX_PROMPT_LENGTH = 32_000;
  * Starts a research session in the local agent (company website research + follow-up questions). The
  * `X-Longform-User` header (UUID) is forwarded so the agent can use this user's past prompts.
  */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const body = await jsonBody(request);
   if (body instanceof NextResponse) return body;
   if (typeof body.prompt !== "string" || !body.prompt.trim()) {
@@ -30,3 +32,5 @@ export async function POST(request: Request) {
     body: JSON.stringify({ prompt: body.prompt.trim(), ...(body.looping === undefined ? {} : { looping: body.looping }) }),
   });
 }
+
+export const POST = withRouteLog(logUserPrompt("research", handlePost));

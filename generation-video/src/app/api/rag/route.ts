@@ -1,9 +1,10 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { retrieveContext } from "@/lib/rag";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+async function routeGET(request: Request) {
   const url = new URL(request.url);
   const query = url.searchParams.get("q")?.trim();
   if (!query) return NextResponse.json({ error: "Missing q parameter." }, { status: 400 });
@@ -17,3 +18,5 @@ export async function GET(request: Request) {
   });
   return NextResponse.json(context);
 }
+
+export const GET = withRouteLog(routeGET);

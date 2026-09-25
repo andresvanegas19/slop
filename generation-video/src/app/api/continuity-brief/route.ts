@@ -1,8 +1,9 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { createMockContinuityBrief } from "@/lib/mock-video-agent";
 import { logError, logInfo } from "@/lib/runtime-log";
 
-export async function POST(request: Request) {
+async function routePOST(request: Request) {
   try {
     const body = await request.json() as { selectedColumns?: unknown };
     if (!Array.isArray(body.selectedColumns) || !body.selectedColumns.every((column) => typeof column === "string")) {
@@ -20,3 +21,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withRouteLog(routePOST);

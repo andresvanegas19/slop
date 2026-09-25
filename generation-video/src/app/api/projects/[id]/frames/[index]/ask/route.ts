@@ -1,9 +1,11 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { streamable } from "@/lib/ndjson";
 import { clampWindowSec } from "@/lib/project-edit";
 import { actionErrorResponse, askFrame } from "@/lib/project-actions";
 import { logException } from "@/lib/runtime-log";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -74,4 +76,4 @@ async function handlePost(request: Request, { params }: { params: Promise<{ id: 
 }
 
 /** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
-export const POST = logUserPrompt("ask", streamable(handlePost));
+export const POST = withRouteLog(jobable("ask", logUserPrompt("ask", streamable(handlePost))));

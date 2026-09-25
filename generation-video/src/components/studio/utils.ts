@@ -1,5 +1,5 @@
 /* Pure helpers for the studio (moved verbatim from app/page.tsx). */
-import type { HistoryItem, HistoryKind, MediaType, PresetType, Project, ProjectFrame, RenderIssue, ThreadEntry, TimeWindow, Upload } from "./types";
+import type { HistoryItem, HistoryKind, MediaType, MemoryChip, PresetType, Project, ProjectFrame, RenderIssue, ThreadEntry, TimeWindow, Upload } from "./types";
 
 export const HISTORY_KEY = "longform.history.v1";
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -225,6 +225,28 @@ export function ragLabels(value: unknown): string[] | undefined {
   return labels.length > 0 ? labels : undefined;
 }
 
+const MEMORY_KINDS = new Set(["knowledge", "video", "user_prompt", "research", "example"]);
+
+/** Validates `memorySources` from the server into chips (drops malformed items and non-http/app links). */
+export function memoryChips(value: unknown): MemoryChip[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const chips = value.flatMap((item): MemoryChip[] => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.kind !== "string" || !MEMORY_KINDS.has(record.kind) || typeof record.title !== "string" || typeof record.ref !== "string") return [];
+    const url = typeof record.url === "string" && /^(https?:\/\/|\/api\/)/.test(record.url) ? record.url : undefined;
+    return [{
+      kind: record.kind as MemoryChip["kind"],
+      title: record.title,
+      ref: record.ref,
+      ...(url ? { url } : {}),
+      ...(typeof record.at === "string" ? { at: record.at } : {}),
+      score: typeof record.score === "number" ? record.score : 0,
+    }];
+  });
+  return chips.length > 0 ? chips : undefined;
+}
+
 /** Flattens the project's saved per-frame chats into thread entries. */
 export function threadFromProject(project: Project): ThreadEntry[] {
   const entries: ThreadEntry[] = [];
@@ -251,6 +273,7 @@ export function threadFromProject(project: Project): ThreadEntry[] {
           afterUrl: message.edited ? frame?.imageUrl : undefined,
           enhancedPrompt: message.enhancedPrompt,
           ragSources: ragLabels(message.ragSources),
+          memorySources: memoryChips(message.memorySources),
         });
       }
     });

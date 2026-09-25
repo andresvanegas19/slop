@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { agentErrorResponse, agentFetch, badSessionId } from "@/lib/research-agent";
 
@@ -11,7 +12,7 @@ export const maxDuration = 900;
  * `{ type: "heartbeat", after }` every ~15 s while idle. The stream stays open until the session is done/stopped/error
  * (or 15 min; reconnect with `after` = last seq). `follow=0` returns the backlog and closes (for polling).
  */
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routeGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const invalid = badSessionId(id);
   if (invalid) return invalid;
@@ -66,3 +67,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     },
   });
 }
+
+export const GET = withRouteLog(routeGET);

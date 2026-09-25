@@ -76,10 +76,24 @@ Keep the injected block short (≤ ~1200 chars) and clearly delimited; the text 
 The app exposes the exact block it injects: `GET http://localhost:3000/api/user-context?projectId=<id>` with header
 `X-Longform-User: <uuid>` → `{ userId, context }`.
 
-## How the app uses it
+## How the app uses it (memory)
 
-`userContextBlock()` (cached 30 s per user, invalidated when a new prompt is logged; returns `""` on any failure)
-is appended to the system prompt, delimited by `=== User context … ===` / `=== End user context ===`, in:
-intent detection (`src/lib/intent.ts`, trimmed to 600 chars), image/shot prompt enhancement
-(`src/lib/prompt-enhance.ts`; the style-drift guard and placeholder skips still apply, and output that copies the
-user context is rejected like copied guidance) and the preset writer (`src/lib/presets.ts`, 800 chars).
+`src/lib/memory.ts` `retrieveMemory(query, { userId?, projectId?, researchSessionId?, tags?, k?, maxChars? })` is the
+single retrieval step for the LLM calls (intent detection via `/command`, frame chat + image-prompt enhancement via
+ask/edit, shot enhancement via append, and the preset writer). It merges:
+
+| kind          | from                                                        | `ref` / `url` |
+|---------------|-------------------------------------------------------------|---------------|
+| `knowledge`   | `knowledge/*.md` sections (BM25 + heading weight + phrase boost, ≤ 2 chunks per file, near-duplicates dropped) | `file#section` |
+| `example`     | learned edit examples `output/knowledge/edits.jsonl` (recency-weighted) | `file#L<line>` |
+| `video`       | `slop_human_video_events` (newest version per other project; title, prompts, edits) | `video_sha256` / `/api/rawtree/videos/<sha>` |
+| `user_prompt` | this table (the user's successful prompts + an inferred "your usual style" line) | `event_id` |
+| `research`    | `slop_human_research_events` findings for the request's research session | evidence URL |
+
+Scores are mapped to 0..1, weighted per source, decayed by age, capped per source, de-duplicated and fitted into
+`maxChars`; RawTree reads are cached 30 s and time-boxed (4 s). Each line of the injected block names its origin
+(e.g. `[2] Past video "…" (3h ago, edited, 7.4s): …`, `[3] Your earlier request (8m ago, command): "…"`). The image /
+shot enhancers keep their style-drift guard and placeholder skips, and reject output that copies the memory text.
+Responses carry `memorySources` (also stored on the assistant chat entry) next to `ragSources` (titles, kept for
+compatibility). Debug: `GET /api/memory?q=&userId=&projectId=&researchSessionId=` → `{ text, sources }`.
+`getUserContext()` (`GET /api/user-context`) still returns the plain per-user summary block.

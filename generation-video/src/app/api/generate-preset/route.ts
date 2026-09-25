@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { streamable } from "@/lib/ndjson";
@@ -7,6 +8,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { BflError, describeError, isVideoQuality, type VideoQuality } from "@/lib/bfl";
 import {
+  PRESETS,
   PRESET_DURATIONS,
   PRESET_IDS,
   buildPresetStoryboard,
@@ -15,6 +17,7 @@ import {
   type PresetId,
   type PresetStoryboard,
 } from "@/lib/presets";
+import { parseStoryline, type Storyline } from "@/lib/storyline";
 import { companyContextForWriter, getCompanyContext } from "@/lib/company-agent";
 import {
   ResearchAgentError,
@@ -30,6 +33,7 @@ import type { MemorySource } from "@/lib/memory";
 import { logException, logInfo } from "@/lib/runtime-log";
 import { isStoryboardRenderMode, renderStoryboard, totalDurationMs, type StoryboardRenderMode } from "@/lib/storyboard-renderer";
 import { validateStoryboard } from "@/lib/storyboard";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 
@@ -57,11 +61,13 @@ function failure(error: unknown, stage: string, preset: PresetId) {
 }
 
 /**
- * POST `{ preset: "ad" | "company", prompt: string, durationSec?: 5 | 10 | 15 | 30, aspect?: "16:9", dryRun?: boolean,
- *   researchSessionId?: string }`
+ * POST `{ preset: "ad" | "company" | "competitive", prompt: string, durationSec?: 5 | 10 | 15 | 30, aspect?: "16:9",
+ *   dryRun?: boolean, researchSessionId?: string, storyline?: Storyline }`
  * → `{ videoUrl, durationSeconds, sceneCount, narrationAvailable, storyboard, project, research? }` (dryRun → `{ storyboard, research? }`).
  * `researchSessionId` (from POST /api/research) grounds the script in that session's CompanyProfile and the user's
  * answers, and steers image prompts with its visual identity; without it the company agent brief is used as before.
+ * `storyline` (from POST /api/research/{id}/storyline, possibly edited by the user) must match the preset's scenes;
+ * each scene follows its beat and competitor names are filtered out of every line.
  */
 async function handlePost(request: Request) {
   let body: Record<string, unknown>;
@@ -104,6 +110,17 @@ async function handlePost(request: Request) {
   if (body.researchSessionId !== undefined && (typeof body.researchSessionId !== "string" || !SESSION_ID.test(body.researchSessionId))) {
     return responseError('"researchSessionId" must be a research session id from POST /api/research (e.g. "research_1a2b…").', 400);
   }
+  let storyline: Storyline | undefined;
+  if (body.storyline !== undefined) {
+    if (typeof body.researchSessionId !== "string") return responseError('"storyline" needs the "researchSessionId" it was written for.', 400);
+    const checked = parseStoryline(body.storyline);
+    if ("error" in checked) return responseError(checked.error, 400);
+    storyline = checked.storyline;
+    const scenes = PRESETS[preset].roles[durationSec].length;
+    if (storyline.template !== preset) return responseError(`The storyline was written for the "${storyline.template}" template, not "${preset}".`, 400);
+    if (storyline.beats.length !== scenes) return responseError(`The storyline has ${storyline.beats.length} scenes; the ${preset} template at ${durationSec}s has ${scenes}.`, 400);
+    if (storyline.session_id && storyline.session_id !== body.researchSessionId) return responseError("The storyline belongs to a different research session.", 400);
+  }
 
   let research: ResearchSession | undefined;
   if (typeof body.researchSessionId === "string") {
@@ -119,9 +136,16 @@ async function handlePost(request: Request) {
     if (!research.profile) {
       return responseError(`Research session ${research.session_id} has no company profile yet (status: ${research.status}); wait for its first round to finish.`, 409);
     }
+    if (storyline) {
+      // The agent's list is authoritative: the browser copy may have dropped names from avoid_terms.
+      const avoid = [...new Set([...storyline.avoid_terms, ...(research.competitors?.avoid_terms ?? []), ...(research.storyline?.avoid_terms ?? [])])];
+      const checked = parseStoryline({ ...storyline, avoid_terms: avoid });
+      if ("error" in checked) return responseError(checked.error, 400);
+      storyline = checked.storyline;
+    }
   }
   const researchInfo = research
-    ? { sessionId: research.session_id, company: research.profile?.name ?? research.company, profileVersion: research.profile?.version, answers: research.answers.length }
+    ? { sessionId: research.session_id, company: research.profile?.name ?? research.company, profileVersion: research.profile?.version, answers: research.answers.length, ...(storyline ? { storylineId: storyline.storyline_id, storylineVersion: storyline.version } : {}) }
     : undefined;
   const researchSessionId = typeof body.researchSessionId === "string" && isValidProjectId(body.researchSessionId) ? body.researchSessionId : undefined;
 
@@ -132,7 +156,7 @@ async function handlePost(request: Request) {
     emitStage("prompt", "Writing the storyboard…");
     // A research session is specific to this company; the tracked-competitor brief would only add noise then.
     companyContext = research ? researchContextForWriter(research) : companyContextForWriter(await getCompanyContext(prompt, "preset"));
-    ({ storyboard, memorySources } = await buildPresetStoryboard({ preset, prompt, durationSec, aspect, companyContext, visualHint: researchVisualHint(research) }));
+    ({ storyboard, memorySources } = await buildPresetStoryboard({ preset, prompt, durationSec, aspect, companyContext, visualHint: researchVisualHint(research), storyline }));
   } catch (error) {
     return failure(error, "build", preset);
   }
@@ -204,4 +228,4 @@ async function handlePost(request: Request) {
 }
 
 /** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
-export const POST = logUserPrompt((body) => (body.preset === "company" ? "preset_company" : "preset_ad"), streamable(handlePost));
+export const POST = withRouteLog(jobable("preset", logUserPrompt((body) => (body.preset === "company" ? "preset_company" : "preset_ad"), streamable(handlePost))));

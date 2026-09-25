@@ -15,7 +15,7 @@ function system(clipSeconds: number) {
     `You write prompts for FLUX 3, a text-to-video model with synchronized audio. The clip is ${clipSeconds} seconds long.`,
     "Expand the user's idea into ONE paragraph of 50 to 130 words, in this order:",
     "1. Visual style or medium (for example: handheld documentary footage, 35mm film, 1990s cel animation).",
-    "2. The subject and the action, already in motion on the first frame, with the key moment landing within the clip.",
+    "2. The subject and the action, already in motion on the first frame: a scroll-stopping first second (sudden motion, an extreme close detail or a strong contrast) that raises a question, with the key moment landing within the clip.",
     "3. One clear camera move (push in, orbit, tracking shot, whip pan, locked-off) and the lighting.",
     "4. A sentence starting with \"Audio:\" naming the ambience, sound effects, and music or dialogue that fit the scene.",
     "5. End with: No on-screen text.",

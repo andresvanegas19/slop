@@ -7,6 +7,7 @@ evidence ids the run actually saw. If the model fails, a deterministic brief is 
 import ast
 import hashlib
 import json
+import logging
 import re
 import time
 import uuid
@@ -18,8 +19,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from contracts import AgentRunRecord, AgentToolCall, CompanyContext, ContextClaim, ModelCallRecord
 from contracts.agent import MAX_BRIEF_CHARS
 from core.liquid import parse_json
+from core.logs import event
 
 from .tools import CompanyTools
+
+log = logging.getLogger("agent.react")
 
 MAX_PROMPT_CHARS = 2000
 MAX_CLAIMS = 8
@@ -254,6 +258,14 @@ class CompanyAgent:
         return _text(message)
 
     def _tool(self, lc_tools, name, args, step):
+        t0 = time.perf_counter()
+        obs, call = self._tool_inner(lc_tools, name, args, step)
+        event(log, "tool_call_done", logging.INFO if call.ok else logging.WARNING, tool=call.tool, step=step, ok=call.ok,
+              inputChars=len(json.dumps(args or {}, default=str)), outputChars=len(obs), error=call.error,
+              durationMs=int((time.perf_counter() - t0) * 1000))
+        return obs, call
+
+    def _tool_inner(self, lc_tools, name, args, step):
         tool = lc_tools.get(name)
         if tool is None:
             obs = json.dumps({"error": "unknown tool {!r}; use one of {}".format(name, sorted(lc_tools))})

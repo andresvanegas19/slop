@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextRequest, NextResponse } from "next/server";
 import { RawTreeConfigurationError, RawTreeRequestError, queryRawTreeForStoryboard } from "@/lib/rawtree";
 
@@ -28,7 +29,7 @@ function parseBody(value: QueryBody) {
   return { table: value.table, columns: value.columns as string[] | undefined, limit: value.limit };
 }
 
-export async function POST(request: NextRequest) {
+async function routePOST(request: NextRequest) {
   try {
     const body: unknown = await request.json();
     if (body === null || Array.isArray(body) || typeof body !== "object") {
@@ -43,3 +44,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: code }, { status });
   }
 }
+
+export const POST = withRouteLog(routePOST);

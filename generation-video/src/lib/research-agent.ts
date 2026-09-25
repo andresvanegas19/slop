@@ -2,7 +2,8 @@ import { loadEnvConfig } from "@next/env";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
-import { logError, logException, logInfo } from "@/lib/runtime-log";
+import { currentTrace, log, logError, logException, logInfo } from "@/lib/runtime-log";
+import type { Storyline } from "@/lib/storyline";
 import { ANONYMOUS_USER, parseUserId } from "@/lib/user-context";
 
 /**
@@ -73,6 +74,18 @@ export type ResearchSession = {
   pages: { url: string; title: string; status: number; chars: number; fetched_at: string }[];
   stats: { pages: number; findings: number; tokens: number; input_tokens: number; output_tokens: number; llm_calls: number; rounds: number };
   error: string | null;
+  /** Competitor research (agent/story_api.py); names stay server-side except as `avoid_terms` for filtering. */
+  competitors?: CompetitorLandscape | null;
+  /** Latest storyline written by the agent's storyline tool, if any. */
+  storyline?: Storyline | null;
+};
+export type CompetitorLandscape = {
+  status: string;
+  message?: string;
+  competitors: { id?: string; name: string; domain?: string | null; verified: boolean; summary?: string; claims?: string[]; pages?: number }[];
+  differentiators: string[];
+  competitor_themes: string[];
+  avoid_terms: string[];
 };
 
 function agentUrl() {
@@ -109,9 +122,17 @@ export async function agentFetch(pathname: string, init: RequestInit & { timeout
   const base = agentUrl();
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, ...rest } = init;
   const signals = [signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter((s): s is AbortSignal => Boolean(s));
+  // The agent logs with the same trace id (X-Trace-Id), so /api/logs?traceId=… shows both sides.
+  const headers = new Headers(rest.headers);
+  const trace = currentTrace();
+  if (trace) headers.set("X-Trace-Id", trace.traceId);
+  const startedAt = Date.now();
   try {
-    return await fetch(new URL(pathname, base), { ...rest, cache: "no-store", signal: signals.length ? AbortSignal.any(signals) : undefined });
+    const response = await fetch(new URL(pathname, base), { ...rest, headers, cache: "no-store", signal: signals.length ? AbortSignal.any(signals) : undefined });
+    log(response.ok ? "debug" : "warn", "agent_call_done", { method: rest.method ?? "GET", path: pathname.split("?")[0], status: response.status, durationMs: Date.now() - startedAt });
+    return response;
   } catch (error) {
+    log("warn", "agent_call_failed", { method: rest.method ?? "GET", path: pathname.split("?")[0], error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt });
     const code = errorCode(error);
     if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EHOSTUNREACH") {
       throw new ResearchAgentError(`${NOT_RUNNING} (nothing is listening on ${base.host}).`, 503);
@@ -154,7 +175,7 @@ export function agentErrorResponse(error: unknown, route: string) {
 }
 
 /** Proxies one JSON call to the agent and returns its status + body (errors as `{ error }`). */
-export async function proxyJson(route: string, pathname: string, init: RequestInit = {}) {
+export async function proxyJson(route: string, pathname: string, init: RequestInit & { timeoutMs?: number | null } = {}) {
   try {
     const response = await agentFetch(pathname, init);
     return agentReply(response.status, await readJson(response), route);

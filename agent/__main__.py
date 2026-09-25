@@ -7,9 +7,10 @@
   python -m agent ask "a launch video for our pricing change" --kind video
   python -m agent show                        # latest cached context
   python -m agent publish                     # deliver queued agent events to RawTree (permanent!)
-  python -m agent research "a video for Coca-Cola" [--rounds 1]   # one research session, events printed
+  python -m agent research "a video for Coca-Cola" [--rounds 1] [--competitors]   # one research session, events printed
 
-The worker also serves research sessions: POST /research {prompt} -> {session_id}; see agent/README.md.
+The worker also serves research sessions: POST /research {prompt} -> {session_id}; competitor research, the
+storyline tool and first-prompt company detection live in agent/story_api.py. See agent/README.md.
 
 Nothing is written to RawTree without --publish / publish. Keys come from the repository-root .env.
 """
@@ -21,11 +22,15 @@ import sys
 import threading
 from pathlib import Path
 
+from core.logs import setup_logging
+
 from .config import load_settings
+from .nimble_fetch import make_fetcher
 from .react import CompanyAgent
 from .research import ResearchManager
 from .research_store import ResearchStore
 from .store import AgentStore
+from .story_api import StoryService
 from .worker import AgentWorker, serve
 
 
@@ -62,8 +67,17 @@ def build(args):
             return liquid_chat_model(settings, timeout_s=180, max_tokens=settings.research_max_tokens,
                                      reasoning=settings.research_reasoning)
     research = ResearchManager(settings, ResearchStore(settings.agent_db), llm_factory=research_llm, outbox=store,
-                               rawtree=rawtree if publish else None, publish=publish, reader=rawtree)
-    worker = AgentWorker(settings, agent, store, coordinator, rawtree, publish=publish, research=research)
+                               rawtree=rawtree if publish else None, publish=publish, reader=rawtree,
+                               fetcher_factory=make_fetcher)
+    detect_llm = None
+    if research_llm is not None:
+        from .llm import liquid_chat_model
+
+        def detect_llm():
+            return liquid_chat_model(settings, timeout_s=30, max_tokens=2048, reasoning="low")
+    story = StoryService(settings, research, llm_factory=research_llm, detect_llm_factory=detect_llm)
+    worker = AgentWorker(settings, agent, store, coordinator, rawtree, publish=publish, research=research,
+                         story=story)
     try:
         from .market import MarketManager
         from .market_pipeline import build_pipeline
@@ -89,7 +103,15 @@ def run_research(worker, args):
         if not session.alive() and manager.finished(sid):
             break
         time.sleep(0.5)
-    print(json.dumps(manager.view(sid), indent=2, ensure_ascii=False, default=str))
+    if args.competitors and manager.store.load(sid).profile is not None:
+        worker.story.start_competitors(sid)
+        worker.story.jobs[sid].join()
+        for e in manager.store.events(sid, after=after):
+            after = e["seq"]
+            print(json.dumps(e, ensure_ascii=False, default=str)[:600], flush=True)
+    view = manager.view(sid)
+    view.update(worker.story.extras(sid))
+    print(json.dumps(view, indent=2, ensure_ascii=False, default=str))
 
 
 def print_context(ctx, stale=None):
@@ -115,13 +137,15 @@ def main():
     r.add_argument("prompt")
     r.add_argument("--rounds", type=int, default=1, help="rounds (RESEARCH_MAX_ROUNDS caps it)")
     r.add_argument("--publish", action="store_true", help="write research events to RawTree (permanent)")
+    r.add_argument("--competitors", action="store_true", help="then research the company's competitors (Nimble)")
     r.add_argument("--no-llm", action="store_true")
     sub.add_parser("show", help="print the latest cached context")
     sub.add_parser("publish", help="deliver queued agent events to RawTree (permanent)")
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    setup_logging()  # key=value console lines + generation-video/output/logs/agent-<date>.ndjson
 
     settings, store, agent, worker = build(args)
+    setup_logging()  # again: build() loaded .env, which may set LOG_LEVEL / LOG_FILE_LEVEL
     if args.cmd == "show":
         ctx = store.latest_context()
         return print_context(ctx) if ctx else print("no context yet; run `python -m agent once`")
@@ -149,6 +173,7 @@ def main():
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    worker.story.run_watcher(stop)  # starts competitor research once a new session has its company profile
     try:
         worker.run_forever(stop)  # main thread: core's SQLite connection is not shared across threads
     finally:

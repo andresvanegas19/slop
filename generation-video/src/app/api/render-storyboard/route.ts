@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -10,6 +11,7 @@ import { schedulePublish } from "@/lib/video-store";
 import { logInfo, logException } from "@/lib/runtime-log";
 import { renderStoryboard, totalDurationMs } from "@/lib/storyboard-renderer";
 import { validateStoryboard, type Storyboard } from "@/lib/storyboard";
+import { jobable } from "@/lib/job-route";
 
 export const runtime = "nodejs";
 
@@ -129,4 +131,4 @@ async function handlePost(request: Request) {
   }
 }
 
-export const POST = logUserPrompt("storyboard", handlePost);
+export const POST = withRouteLog(jobable("storyboard", logUserPrompt("storyboard", handlePost)));

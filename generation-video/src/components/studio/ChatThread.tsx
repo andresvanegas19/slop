@@ -4,7 +4,8 @@ import { motion, type Variants } from "motion/react";
 import type { ReactNode, RefObject } from "react";
 import BlobLoader from "@/components/BlobLoader";
 import LiveStatus from "./LiveStatus";
-import type { PendingOp, ThreadEntry } from "./types";
+import { ViewLogLink } from "./LogDrawer";
+import type { MemoryChip, NewVideoSuggestion, PendingOp, ThreadEntry } from "./types";
 import { cn, fade, spring } from "./ui";
 
 type ChatThreadProps = {
@@ -16,7 +17,14 @@ type ChatThreadProps = {
   onCancel: () => void;
   /** Messages rendered before the thread (e.g. a company research session). */
   lead?: ReactNode;
+  /** "This sounds like a new video" bubbles: start it (closes the editor) or keep editing. */
+  onStartNewVideo?: (suggestion: NewVideoSuggestion) => void;
+  onKeepEditing?: () => void;
 };
+
+type SuggestionActions = { onStartNewVideo?: (suggestion: NewVideoSuggestion) => void; onKeepEditing?: () => void };
+
+const SUGGESTION_LABEL: Record<NewVideoSuggestion["preset"], string> = { company: "Start a new company video", ad: "Start a new ad", clip: "Start a new video" };
 
 const list: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.035 } } };
 export const bubble: Variants = { hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0, transition: fade } };
@@ -34,7 +42,7 @@ function Figure({ src, alt, caption }: { src: string; alt: string; caption: stri
   );
 }
 
-function Entry({ entry }: { entry: ThreadEntry }) {
+function Entry({ entry, actions }: { entry: ThreadEntry; actions?: SuggestionActions }) {
   if (entry.role === "user") {
     return (
       <motion.div variants={bubble} className={cn(BUBBLE, "items-center self-end rounded-br-[5px] bg-blue text-white")}>
@@ -62,6 +70,16 @@ function Entry({ entry }: { entry: ThreadEntry }) {
         </motion.span>
       )}
       {entry.text && <p className={TEXT}>{entry.text}</p>}
+      {entry.suggestion && actions?.onStartNewVideo && (
+        <div className="mt-0.5 flex flex-wrap gap-1.5">
+          <button type="button" className="rounded-full border border-accent bg-accent px-3 py-1.5 text-[12px] text-white hover:brightness-110" onClick={() => actions.onStartNewVideo?.(entry.suggestion!)}>
+            {SUGGESTION_LABEL[entry.suggestion.preset]}
+          </button>
+          <button type="button" className="rounded-full border border-chip-line bg-chip px-3 py-1.5 text-[12px] text-[#cfcfcf] hover:bg-chip-hover hover:text-white" onClick={actions.onKeepEditing}>
+            Keep editing this one
+          </button>
+        </div>
+      )}
       {entry.edited && (entry.beforeUrl || entry.afterUrl) && (
         <div className="flex items-center gap-2">
           {entry.beforeUrl && <Figure src={entry.beforeUrl} alt="Before" caption="Before" />}
@@ -76,13 +94,59 @@ function Entry({ entry }: { entry: ThreadEntry }) {
           <p className={cn(TEXT, "mt-1 text-[#bdbdbd]")}>{entry.enhancedPrompt}</p>
         </details>
       )}
-      {entry.ragSources && <small className="text-[10px] text-[#7c7c7c]">Used guidance: {entry.ragSources.join(", ")}</small>}
+      {entry.memorySources ? <MemoryRow sources={entry.memorySources} /> : entry.ragSources && <small className="text-[10px] text-[#7c7c7c]">Used guidance: {entry.ragSources.join(", ")}</small>}
+      <ViewLogLink at={entry.at} className="mt-1 self-start" />
     </motion.div>
   );
 }
 
+const MEMORY_ICON: Record<MemoryChip["kind"], string> = { knowledge: "📚", video: "🎞", user_prompt: "💬", research: "🔎", example: "✦" };
+
+function sinceLabel(at?: string) {
+  const time = at ? Date.parse(at) : NaN;
+  if (!Number.isFinite(time)) return "";
+  const minutes = Math.max(0, (Date.now() - time) / 60_000);
+  return minutes < 60 ? `${Math.round(minutes)}m ago` : minutes < 2_880 ? `${Math.round(minutes / 60)}h ago` : `${Math.round(minutes / 1_440)}d ago`;
+}
+
+function chipLabel(source: MemoryChip) {
+  if (source.kind === "knowledge") {
+    const [doc, section] = source.title.split(" — ");
+    return section ? `${doc.split(" ").slice(0, 2).join(" ")} › ${section}` : doc;
+  }
+  if (source.kind === "user_prompt") return [source.title === "Your usual style" ? "your usual style" : `“${source.title}”`, sinceLabel(source.at)].filter(Boolean).join(" · ");
+  if (source.kind === "example") return ["past edit", sinceLabel(source.at)].filter(Boolean).join(" · ");
+  return source.title;
+}
+
+/** "Memory used" chips: where the context for this reply came from (docs, past videos, your prompts, research). */
+function MemoryRow({ sources }: { sources: MemoryChip[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[10px] text-[#7c7c7c]" aria-label="Memory used">
+      <span className="mr-0.5">Memory used</span>
+      {sources.slice(0, 6).map((source) => {
+        const body = (
+          <>
+            <span aria-hidden="true">{MEMORY_ICON[source.kind]}</span>
+            <span className="max-w-[180px] truncate">{chipLabel(source)}</span>
+          </>
+        );
+        const className = "inline-flex max-w-[210px] items-center gap-1 rounded-full border border-[#2a2a2a] bg-[#161616] px-1.5 py-[1px] text-[#8d8d8d]";
+        const title = `${source.kind.replace("_", " ")} · ${source.ref} · score ${source.score}`;
+        return source.url ? (
+          <a key={`${source.kind}:${source.ref}`} className={cn(className, "hover:border-[#3a3a3a] hover:text-[#b5b5b5]")} href={source.url} target="_blank" rel="noreferrer" title={title}>{body}</a>
+        ) : (
+          <span key={`${source.kind}:${source.ref}`} className={className} title={title}>{body}</span>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Continue-mode conversation: saved + local entries, then the pending operation (running or failed with Retry). */
-export default function ChatThread({ threadRef, thread, pendingOp, isEditing, onRetry, onCancel, lead }: ChatThreadProps) {
+export default function ChatThread({ threadRef, thread, pendingOp, isEditing, onRetry, onCancel, lead, onStartNewVideo, onKeepEditing }: ChatThreadProps) {
+  // Only the latest new-video suggestion keeps its buttons.
+  const lastSuggestion = [...thread].reverse().find((entry) => entry.suggestion)?.id;
   return (
     <motion.div
       className="mt-[14px] mb-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1.5 py-2 text-left [scrollbar-color:#333_transparent] max-[760px]:max-h-[60vh]"
@@ -93,13 +157,14 @@ export default function ChatThread({ threadRef, thread, pendingOp, isEditing, on
       animate="visible"
     >
       {lead}
-      {thread.map((entry) => <Entry key={entry.id} entry={entry} />)}
+      {thread.map((entry) => <Entry key={entry.id} entry={entry} actions={entry.id === lastSuggestion ? { onStartNewVideo, onKeepEditing } : undefined} />)}
       {pendingOp && (
         <>
           <Entry key={pendingOp.user.id} entry={pendingOp.user} />
           {pendingOp.error ? (
             <motion.div key="pending-error" variants={bubble} className={cn(BUBBLE, "flex-col self-start rounded-bl-[5px] border border-danger-line bg-[#2a121255] text-danger-soft")} role="alert">
               <p className={TEXT}>{pendingOp.error}</p>
+              <ViewLogLink className="mt-1 self-start" />
               <button type="button" className={LINK} onClick={onRetry} disabled={isEditing}>↻ Retry</button>
             </motion.div>
           ) : pendingOp.live ? (

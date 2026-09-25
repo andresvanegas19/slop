@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -40,7 +41,7 @@ async function writeAtomically(destination: string, contents: Uint8Array | strin
   }
 }
 
-export async function POST(request: Request) {
+async function routePOST(request: Request) {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
     logError("finetune_rejected", { reason: "invalid_content_type" });
@@ -141,3 +142,5 @@ export async function POST(request: Request) {
     return errorResponse("Unable to save fine-tune checkpoint.", 500);
   }
 }
+
+export const POST = withRouteLog(routePOST);
