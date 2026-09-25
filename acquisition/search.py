@@ -25,7 +25,16 @@ LOW_VALUE_HOSTS = {
     "medium.com", "quora.com", "tiktok.com", "wikipedia.org",
     "finance.yahoo.com", "stocktitan.net", "marketbeat.com", "simplywall.st", "sec.gov", "tradingview.com",
     "zacks.com", "nasdaq.com", "stockanalysis.com", "macrotrends.net", "seekingalpha.com", "fool.com",
+    # company-stats aggregators: estimated, undated numbers, not news (a Loom run turned getlatka into "developments")
+    "getlatka.com", "crunchbase.com", "owler.com", "zoominfo.com", "cbinsights.com", "pitchbook.com", "craft.co",
+    "growjo.com", "tracxn.com", "rocketreach.co", "apollo.io", "leadiq.com", "similarweb.com",
+    # app listings and marketplaces
+    "apps.apple.com", "play.google.com", "chromewebstore.google.com", "microsoft.com", "appsource.microsoft.com",
+    # obituaries: a news search for "Slack" returned funeral-home pages for people named Slack
+    "legacy.com", "tributearchive.com", "echovita.com",
 }
+LOW_VALUE_PATH_WORDS = ("/obituar", "/marketplace/app/", "/forums/", "/community/")
+LOW_VALUE_SUBDOMAINS = ("community.", "forum.", "forums.", "support.", "help.", "docs.")
 LOW_VALUE_PATH_PREFIXES = {"investing.com": ("/equities/", "/quote"), "cnbc.com": ("/quotes/",),
                            "marketwatch.com": ("/investing/stock/",), "google.com": ("/finance",)}
 TWO_LEVEL_SUFFIXES = {"co.uk", "com.au", "co.jp", "com.br", "co.in", "co.nz", "com.mx", "com.sg", "co.za"}
@@ -62,6 +71,9 @@ def domain_label(url_or_host: str) -> str:
 def is_low_value(url: str) -> bool:
     host = host_of(url)
     if host in LOW_VALUE_HOSTS or registered_domain(host) in LOW_VALUE_HOSTS:
+        return True
+    path = (urlsplit(url).path or "/").lower()
+    if host.startswith(LOW_VALUE_SUBDOMAINS) or any(w in path for w in LOW_VALUE_PATH_WORDS):
         return True
     prefixes = LOW_VALUE_PATH_PREFIXES.get(registered_domain(host), ())
     return bool(prefixes) and (urlsplit(url).path or "/").startswith(prefixes)

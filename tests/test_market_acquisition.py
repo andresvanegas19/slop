@@ -280,7 +280,8 @@ def test_collect_market_content_pipeline():
     nimble = FakeNimble({"https://techcrunch.com/trello-ai": (ARTICLE, 200),
                          "https://trello.com/pricing": (pricing_md, 200),
                          "https://www.verge.com/monday-com-crm?ref=x": ("", 403)})
-    envs, funnel = asyncio.run(collect_market_content(watch, search, nimble, "run_x", max_pages=10))
+    envs, funnel = asyncio.run(collect_market_content(watch, search, nimble, "run_x", max_pages=10,
+                                                      include_pricing=True))
 
     news_calls = [c for c in search.calls if c["focus"] == "news"]
     assert len(news_calls) == 3 and all(c["time_range"] == "month" for c in news_calls)
@@ -295,3 +296,28 @@ def test_collect_market_content_pipeline():
     assert funnel["skipped_low_value"] >= 2 and funnel["duplicates"] >= 1 and funnel["skipped_off_topic"] >= 1
     assert funnel["fetched"] == 3 and funnel["by_status"] == {"ok": 2, "blocked": 1}
     assert funnel["queries"] == 9
+
+
+def test_market_collection_skips_pricing_by_default():
+    search = FakeSearch([(lambda q, dom: True, [])])
+    asyncio.run(collect_market_content(news_watch(), search, FakeNimble({}), "run_x", max_pages=10))
+    assert not any(c["include_domains"] for c in search.calls)      # no pricing-page searches
+
+
+@pytest.mark.parametrize("url,title,desc,keep", [
+    ("https://www.mcbridefuneralhome.com/m/obituaries/martha-reid/", "Martha Ann Slack Reid Obituary", "", False),
+    ("https://news.example/slack-ai", "Slack launches AI agents for enterprise teams", "", True),
+    ("https://news.example/slack-weather", "Slack water at the harbor this weekend", "tide times", False),
+    ("https://slack.com/blog/news/q3", "Slack: what's new", "", True),              # the company's own site
+    ("https://news.example/x", "Slack and the future of messaging", "", True),      # market hint word
+])
+def test_news_hits_must_look_like_business_news(url, title, desc, keep):
+    from acquisition.content import on_topic
+    h = SearchHit(title=title, url=url, description=desc, position=1, entity_type="NewsResult", query="q")
+    assert (not is_low_value(url) and on_topic("Slack", h, hint="team messaging", domain="slack.com")) is keep
+
+
+@pytest.mark.parametrize("url", ["https://getlatka.com/companies/vidyard", "https://community.atlassian.com/forums/x",
+                                 "https://workspace.google.com/marketplace/app/loom/1", "https://www.legacy.com/o/1"])
+def test_stats_aggregators_marketplaces_and_forums_are_low_value(url):
+    assert is_low_value(url)

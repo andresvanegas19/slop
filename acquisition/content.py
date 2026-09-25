@@ -16,11 +16,17 @@ from contracts import EvidenceEnvelope, MarketWatch, RetrievalStatus, SourceReci
 from .discovery import TLD, mentions
 from .envelope import build
 from .normalize import clean_line, sha256
-from .search import SearchHit, is_low_value, normalize_url
+from .search import SearchHit, host_of, is_low_value, normalize_url
 
 MAX_MARKDOWN = 40_000          # long articles are mostly comments and "related stories"; B reads the top
 NEWS_PARSER = "nimble-search-v1"
 PRICING_PARSER = "nimble-md-cards-v1"   # same plan-card hash as the configured pricing sources
+# A news hit must look like business news, not just contain the name ("Slack" also matches obituaries).
+BUSINESS_WORDS = re.compile(
+    r"\b(launch\w*|ship\w*|debut\w*|roll\w* out|announc\w*|releas\w*|unveil\w*|introduc\w*|rais\w*|funding|acquir\w*|acquisition|merg\w*|"
+    r"partner\w*|integrat\w*|pricing|price\w*|plan|customers?|revenue|earnings|layoffs?|hir\w*|ceo|cto|founder\w*|"
+    r"startup|platform|software|app|product|feature\w*|update\w*|ai|agents?|enterprise|saas|users?|teams?|"
+    r"valuation|ipo|investors?|expan\w*|rebrand\w*)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -56,13 +62,15 @@ def entities(watch: MarketWatch, include_self: bool) -> list[Entity]:
     return out
 
 
-async def entity_hits(entity: Entity, hint: str, search, n: int, time_range: str) -> tuple[list[Planned], int]:
-    """Candidate pages for one entity, best first: news, the pricing page, then launch/partnership pages."""
+async def entity_hits(entity: Entity, hint: str, search, n: int, time_range: str,
+                      include_pricing: bool = False) -> tuple[list[Planned], int]:
+    """Candidate pages for one entity, best first: news, then launch/partnership pages (and the pricing page when
+    asked: a single run can't show a price change, so the market video doesn't use it by default)."""
     news_q = '"{}" {}'.format(entity.name, hint).strip()
-    general_q = '"{}" launches OR announces OR pricing OR partnership'.format(entity.name)
+    general_q = '"{}" {} launches OR announces OR partnership OR funding'.format(entity.name, hint).replace("  ", " ")
     jobs = [search.search(news_q, focus="news", max_results=n, time_range=time_range),
             search.search(general_q, max_results=n, time_range=time_range)]
-    if entity.domain:
+    if entity.domain and include_pricing:
         jobs.append(search.search("{} pricing".format(entity.name), max_results=3, include_domains=[entity.domain]))
     results = await asyncio.gather(*jobs)
     news, general = results[0], results[1]
@@ -92,10 +100,17 @@ def round_robin(per_entity: list[list[Planned]], max_pages: int) -> list[Planned
     return picked
 
 
-def on_topic(name: str, h: SearchHit) -> bool:
-    """The name must appear in the title or description; 'monday.com' must appear as written (not 'Monday')."""
+def on_topic(name: str, h: SearchHit, hint: str = "", domain: Optional[str] = None) -> bool:
+    """The name must appear in the title or description ('monday.com' as written, not 'Monday'), and the hit must
+    look like business news: on the company's own site, or mentioning the market or a business event."""
     text = h.title + " " + h.description
-    return name.lower() in text.lower() if re.search(TLD + "$", name.lower()) else mentions(name, text)
+    named = name.lower() in text.lower() if re.search(TLD + "$", name.lower()) else mentions(name, text)
+    if not named:
+        return False
+    if domain and (host_of(h.url) == domain or host_of(h.url).endswith("." + domain)):
+        return True
+    hint_words = [w for w in re.findall(r"[a-z0-9]+", hint.lower()) if len(w) > 2]
+    return bool(BUSINESS_WORDS.search(text)) or any(w in text.lower() for w in hint_words)
 
 
 def article_hash(text: str) -> str:
@@ -125,14 +140,15 @@ def envelope_for(watch: MarketWatch, p: Planned, run_id: str, result, country: s
 
 
 async def collect_market_content(watch: MarketWatch, search, nimble, run_id: str, max_pages: int = 20,
-                                 include_self: bool = True) -> tuple[list[EvidenceEnvelope], dict]:
+                                 include_self: bool = True, include_pricing: bool = False
+                                 ) -> tuple[list[EvidenceEnvelope], dict]:
     country = watch.company.region or "US"
     locale = "en-" + country
     hint = market_hint(watch.company.category)
     time_range = time_range_for(watch.lookback_days)
     ents = entities(watch, include_self)
-    planned = await asyncio.gather(*(entity_hits(e, hint, search, watch.max_results_per_query, time_range)
-                                     for e in ents))
+    planned = await asyncio.gather(*(entity_hits(e, hint, search, watch.max_results_per_query, time_range,
+                                                 include_pricing) for e in ents))
 
     stats = {"queries": sum(n for _, n in planned), "hits": 0, "skipped_low_value": 0, "duplicates": 0,
              "skipped_off_topic": 0}
@@ -147,7 +163,7 @@ async def collect_market_content(watch: MarketWatch, search, nimble, run_id: str
                 stats["skipped_low_value"] += 1
             elif key in seen:
                 stats["duplicates"] += 1
-            elif p.source_type == SourceType.news and not on_topic(p.entity.name, p.hit):
+            elif p.source_type == SourceType.news and not on_topic(p.entity.name, p.hit, hint, p.entity.domain):
                 stats["skipped_off_topic"] += 1      # "Monday" news that isn't about monday.com
             else:
                 seen.add(key)
