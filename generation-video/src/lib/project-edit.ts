@@ -3,6 +3,7 @@ import { generateFrameImage, renderClipFromFrame } from "@/lib/clip";
 import { CLIP_SECONDS } from "@/lib/clip";
 import { assembleClipProject } from "@/lib/clip-project";
 import { frameFilePath, frameImageUrl, framesFromStoryboard, migrateProject, videoUrl, type Project, type ProjectFrame } from "@/lib/projects";
+import { renderPinnedClip } from "@/lib/pinned-clip";
 import { extractFrameAt, spliceWindow, videoFilePath } from "@/lib/segments";
 import { logInfo } from "@/lib/runtime-log";
 import { validateStoryboard, type Storyboard, type StoryboardOnScreenText } from "@/lib/storyboard";
@@ -207,13 +208,32 @@ async function applyMomentEdit(project: Project, index: number, prompt: string, 
   const segmentPath = videoFilePath(frame.segmentUrl);
   logInfo("moment_edit_started", { projectId: project.id, index, startSec: window.startSec, endSec: window.endSec });
 
-  // i2v starts from its keyframe, so the edited key frame is the frame at the window start.
-  const keyFrame = await extractFrameAt(segmentPath, localStart);
-  const image = await generateFrameImage(editInstruction(prompt), { inputImagePath: frameFilePath(frameImageUrl(keyFrame)) });
-  const clip = await renderClipFromFrame(image.filename, prompt);
+  // Pin the ORIGINAL frames at both ends so the new piece joins the video seamlessly, and the EDITED moment in between.
+  const length = localEnd - localStart;
+  const momentLocal = Math.min(Math.max(moment.atSec - frame.startSec, localStart), localEnd - 1 / 30);
+  const [startFrame, endFrame, momentFrame] = await Promise.all([
+    extractFrameAt(segmentPath, localStart),
+    extractFrameAt(segmentPath, Math.max(localStart, localEnd - 1 / 30)),
+    extractFrameAt(segmentPath, momentLocal),
+  ]);
+  const image = await generateFrameImage(editInstruction(prompt), { inputImagePath: frameFilePath(frameImageUrl(momentFrame)) });
+  const editedPath = frameFilePath(frameImageUrl(image.filename));
+  const pins = length >= 0.6
+    ? [
+        { atSec: 0, imagePath: frameFilePath(frameImageUrl(startFrame)) },
+        { atSec: Math.min(0.8 * length, Math.max(0.2 * length, momentLocal - localStart)), imagePath: editedPath },
+        { atSec: length, imagePath: frameFilePath(frameImageUrl(endFrame)) },
+      ]
+    : [
+        { atSec: 0, imagePath: editedPath },
+        { atSec: length, imagePath: frameFilePath(frameImageUrl(endFrame)) },
+      ];
+  const clip = await renderPinnedClip({ prompt, pins, lengthSec: length });
+  logInfo("moment_edit_clip_rendered", { projectId: project.id, index, timestamps: clip.timestampFormat, pins: pins.length, lengthSec: Math.round(length * 1000) / 1000 });
   const spliced = await spliceWindow(segmentPath, videoFilePath(videoUrl(clip.videoFilename)), localStart, localEnd);
 
-  const startsSegment = localStart < 0.5 / 30;
+  // The key image only changes when the edited frame itself opens the segment (short windows at the segment start).
+  const startsSegment = localStart < 0.5 / 30 && length < 0.6;
   const frames = project.frames.map((item) => item.index === index
     ? {
         ...item,
