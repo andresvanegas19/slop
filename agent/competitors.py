@@ -27,7 +27,8 @@ from core.logs import event
 
 from .research_tools import MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, clean_quote, norm, quote_in_page
 from .story_llm import JsonLlm
-from .web import Page, compact, host_of, link_category, normalize_url, prioritized_links, site_of, slugs
+from .web import (HostNotAllowed, Page, compact, home_guard, home_problem, host_of, link_category, normalize_url,
+                  prioritized_links, site_of, slugs)
 
 log = logging.getLogger("agent.competitors")
 
@@ -247,17 +248,24 @@ class CompetitorResearch:
         for s in slugs(comp.name)[:2]:
             urls += ["https://www.{}.com/".format(s), "https://{}.com/".format(s)]
         names = {compact(comp.name)} | {compact(s) for s in slugs(comp.name)}
-        tried = set()
+        tried, rejected = set(), set()
         for url in urls:
-            if url in tried or len(tried) >= 4 or self.stopped():
+            if url in tried or len(tried) >= 4 or self.stopped() or site_of(host_of(url)) in rejected:
                 continue
             tried.add(url)
             try:
-                page = self.fetcher.fetch(url, allowed=None)
+                page = self.fetcher.fetch(url, allowed=home_guard(url, names))
+            except HostNotAllowed:  # redirected to a parking page or another company's site
+                rejected.add(site_of(host_of(url)))
+                continue
             except Exception:
                 continue
             body = compact(" ".join([page.title, page.description, page.text[:30000]]))
-            if page.status == 200 and any(n and n in body for n in names):
+            found = page.status == 200 and any(n and n in body for n in names)
+            if found and home_problem(url, page, names):  # parked, or someone else's site
+                rejected.add(site_of(host_of(url)))
+                continue
+            if found:
                 comp.verified, comp.home_url = True, page.url
                 comp.domain = site_of(host_of(page.url))
                 if self.state.domain and comp.domain == site_of(self.state.domain):

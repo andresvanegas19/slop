@@ -16,7 +16,8 @@ from agent.research import MAX_CONCURRENT_SESSIONS, ResearchManager, fallback_in
 from agent.research_store import ResearchStore
 from agent.research_tools import ResearchTools
 from agent.store import AgentStore
-from agent.web import USER_AGENT, WebFetcher, extract, parse_robots, robots_allows, slugs
+from agent.web import (USER_AGENT, Page, WebFetcher, extract, home_guard, home_problem, parse_robots, robots_allows,
+                       slugs)
 from agent.worker import AgentWorker, serve
 from contracts import TABLES
 
@@ -261,6 +262,71 @@ def test_unknown_website_is_an_error(settings):
     sid = manager.start("a video for Nonexistent Widgets", looping=False)
     view = wait_done(manager, sid)
     assert view["status"] == "error" and "website" in view["error"]
+
+
+def test_home_problem_spots_parked_domains_and_other_companies():
+    names = {"linear"}
+    listing = Page(url="https://www.namepros.com/parked/linear.co", status=200, title="Linear.co for sale")
+    assert home_problem("https://www.linear.co/", listing, names) == "parked domain"
+    rendered = Page(url="https://linear.io/", status=200, title="Linear.io", text="linear.io is for sale! Make an offer")
+    assert home_problem("https://linear.io/", rendered, names) == "domain for sale"
+    analog = Page(url="https://www.analog.com/", status=200, title="Analog Devices", text="Linear Technology")
+    assert home_problem("https://www.linear.com/", analog, names) == "redirects to analog.com"
+    nimble = Page(url="https://www.linear.com/", status=200, title="Analog Devices",  # browser-rendered redirect
+                  canonical="https://www.analog.com/en/index.html")
+    assert home_problem("https://www.linear.com/", nimble, names) == "redirects to analog.com"
+    real = Page(url="https://linear.app/", status=200, title="Linear – The system for product development",
+                canonical="https://linear.app")
+    assert home_problem("https://www.linear.app/", real, names) is None
+    assert home_problem("https://coca-cola.com/", Page(url="https://www.coca-colacompany.com/", status=200),
+                        {"cocacola"}) is None
+    assert home_problem("https://www.jira.com/", Page(url="https://www.atlassian.com/software/jira", status=200),
+                        {"jira"}) is None
+    guard = home_guard("https://www.linear.co/", names)
+    assert guard("https://linear.co/") and not guard("https://www.namepros.com/parked/linear.co")
+    assert not guard("https://www.analog.com/") and home_guard("https://jira.com/", {"jira"})(
+        "https://www.atlassian.com/software/jira")
+    assert extract("https://linear.app/", '<html><head><link rel="canonical" href="https://linear.app"></head>'
+                   '<body>Linear</body></html>').canonical == "https://linear.app/"
+
+
+def test_resolve_skips_parked_and_redirected_domains(settings):
+    requests = []
+    real = ('<html><head><title>Linear – The system for product development</title>'
+            '<link rel="canonical" href="https://linear.app"></head><body><h1>Linear</h1>'
+            '<p>Linear is a purpose-built tool for planning and building products.</p></body></html>')
+
+    def handler(request: httpx.Request):
+        requests.append(str(request.url))
+        host, path = request.url.host, request.url.path
+        html = {"content-type": "text/html"}
+        if path == "/robots.txt":
+            return httpx.Response(404, text="")
+        if host in ("www.linear.com", "linear.com"):
+            return httpx.Response(301, headers={"location": "https://www.analog.com/"})
+        if host == "www.analog.com":
+            return httpx.Response(200, text="<html><title>Analog Devices</title><body>Linear Technology is now "
+                                             "part of Analog Devices.</body></html>", headers=html)
+        if host in ("www.linear.co", "linear.co"):
+            return httpx.Response(302, headers={"location": "https://www.namepros.com/parked/linear.co"})
+        if host == "www.namepros.com":
+            return httpx.Response(200, text="<html><title>Linear.co for sale</title><body>Linear.co is listed for "
+                                             "sale.</body></html>", headers=html)
+        if host in ("www.linear.io", "linear.io"):
+            return httpx.Response(200, text="<html><body></body></html>", headers=html)
+        if host == "linear.app" or host == "www.linear.app":
+            return httpx.Response(200, text=real, headers=html)
+        raise httpx.ConnectError("does not resolve", request=request)
+
+    fetcher = lambda: WebFetcher(httpx.Client(transport=httpx.MockTransport(handler),  # noqa: E731
+                                              headers={"User-Agent": USER_AGENT}))
+    manager = ResearchManager(settings, ResearchStore(settings.agent_db), llm_factory=None,
+                              outbox=AgentStore(settings.agent_db), fetcher_factory=fetcher)
+    view = wait_done(manager, manager.start("a short ad for Linear", looping=False))
+    assert view["domain"] == "linear.app" and view["home_url"].startswith("https://www.linear.app")
+    assert "https://linear.com/" not in requests and "https://linear.co/" not in requests  # twins of rejected sites
+    assert not any("analog.com" in u or "namepros.com" in u for u in requests), "blocked before fetching"
+    assert all(f["evidence_url"].startswith("https://www.linear.app") for f in view["findings"])
 
 
 def test_publish_writes_only_research_table_with_stable_ids(settings):

@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 from acquisition.nimble import NimbleClient, NimbleResult
 
-from .web import MAX_TEXT_CHARS, FetchError, Page, WebFetcher, extract, host_of, normalize_url
+from .web import MAX_TEXT_CHARS, FetchError, HostNotAllowed, Page, WebFetcher, extract, host_of, normalize_url
 
 log = logging.getLogger("agent.nimble")
 
@@ -96,7 +96,7 @@ class NimbleFetcher(WebFetcher):
         if STATIC_EXT.search(urlparse(target).path):
             return super().fetch(target, allowed=allowed, max_redirects=max_redirects)
         if allowed is not None and not allowed(target):
-            raise FetchError("host not allowed for this company: {}".format(host_of(target)))
+            raise HostNotAllowed("host not allowed for this company: {}".format(host_of(target)))
         if not self.resolves(host_of(target)):
             raise FetchError("{} does not resolve".format(host_of(target)))
         if not self.allowed_by_robots(target):

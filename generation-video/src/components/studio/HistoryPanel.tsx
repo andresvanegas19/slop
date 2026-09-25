@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { generatingLabel, stepText } from "./GenerationStage";
 import { Spinner, useNow } from "./LiveStatus";
+import { LogsButton } from "./LogDrawer";
 import type { HistoryItem, HistoryKind, LiveProgress } from "./types";
 import { HistoryRowContent, LABEL, cn, collapse, fade, springSoft } from "./ui";
 
@@ -88,7 +89,7 @@ export default function HistoryPanel({ history, isHistoryOpen, onToggleHistory, 
           )}
         </AnimatePresence>
       </div>
-      <p className="mt-auto text-[10px] text-faint max-[760px]:hidden">Generated files remain local in <code className="text-[#acacac]">output/</code>.</p>
+      <p className="mt-auto flex items-center justify-between gap-2 text-[10px] text-faint max-[760px]:hidden"><span>Generated files remain local in <code className="text-[#acacac]">output/</code>.</span><LogsButton /></p>
     </>
   );
 }

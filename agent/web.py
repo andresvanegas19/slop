@@ -117,6 +117,7 @@ class Page:
     logo_url: Optional[str] = None
     stylesheets: List[str] = field(default_factory=list)
     content_type: str = ""
+    canonical: Optional[str] = None  # <link rel="canonical"> or og:url: where a browser-rendered redirect ended
 
     def summary(self) -> Dict:
         return {"url": self.url, "title": self.title, "description": self.description, "headings": self.headings[:20]}
@@ -141,6 +142,7 @@ class _Extractor(HTMLParser):
         self.in_style = False
         self.logo: Optional[str] = None
         self.icon: Optional[str] = None
+        self.canonical: Optional[str] = None
         self.stylesheets: List[str] = []
 
     def handle_starttag(self, tag, attrs):
@@ -157,6 +159,8 @@ class _Extractor(HTMLParser):
                 self.icon = urljoin(self.base, a["href"])
             if "stylesheet" in rel and a.get("href") and len(self.stylesheets) < 6:
                 self.stylesheets.append(urljoin(self.base, a["href"]))
+            if "canonical" in rel.split() and a.get("href") and not self.canonical:
+                self.canonical = normalize_url(a["href"], self.base)
         elif tag == "img" and not self.logo:
             marker = " ".join([a.get("src", ""), a.get("alt", ""), a.get("class", ""), a.get("id", "")]).lower()
             if "logo" in marker and a.get("src") and not a["src"].startswith("data:"):
@@ -238,7 +242,58 @@ def extract(url: str, body: str, content_type: str = "text/html", status: int = 
         description=squash(meta.get("description") or meta.get("og:description") or "")[:500], text=text,
         headings=parser.headings[:60], links=parser.links, og_image=urljoin(url, og) if og else None,
         theme_color=theme.strip().lower() if theme else None, colors=colors[:6],
-        logo_url=parser.logo or parser.icon, stylesheets=parser.stylesheets, content_type=content_type)
+        logo_url=parser.logo or parser.icon, stylesheets=parser.stylesheets, content_type=content_type,
+        canonical=parser.canonical or (normalize_url(meta["og:url"], url) if meta.get("og:url") else None))
+
+
+# --- is this really the brand's homepage? --------------------------------------------------------------------------
+PARKING_SITES = {"namepros.com", "sedo.com", "dan.com", "afternic.com", "hugedomains.com", "bodis.com", "above.com",
+                 "parkingcrew.net", "sav.com", "atom.com", "squadhelp.com", "undeveloped.com", "buydomains.com",
+                 "domainmarket.com", "brandbucket.com", "efty.com", "spaceship.com", "domainnamesales.com"}
+PARKED_RE = re.compile(r"\bdomain(?: name)? (?:is |may be )?(?:for sale|available for (?:purchase|sale))|"
+                       r"\bbuy this domain\b|\bthis domain (?:is|may be|has been) (?:for sale|parked)|"
+                       r"\bdomain parking\b|\bparked (?:free|domain)\b", re.I)
+
+
+def related_url(url: str, names) -> bool:
+    """A redirect target that still belongs to the brand: its site is named after it ('coca-colacompany.com') or its
+    path is ('jira.com' -> 'atlassian.com/software/jira'). Parking and for-sale marketplaces never are."""
+    site = site_of(host_of(url))
+    if not site or site in PARKING_SITES:
+        return False
+    label, path = compact(site.split(".")[0]), compact(urlparse(url).path)
+    return any(len(n) >= 3 and (n in label or n in path or (len(label) >= 4 and label in n)) for n in names)
+
+
+def home_problem(requested: str, page: Page, names) -> Optional[str]:
+    """Why `page`, fetched for `requested`, is not the brand's own homepage; None when it is. Catches parked or
+    for-sale domains ('linear.co' -> a NamePros listing) and redirects to an unrelated company ('linear.com' ->
+    analog.com). `names` are compact() forms of the brand name. Browser-rendered pages (Nimble) keep the requested
+    URL, so the canonical URL stands in for the redirect target."""
+    asked = site_of(host_of(requested))
+    finals = [u for u in (page.url, page.canonical) if u and host_of(u)]
+    if any(site_of(host_of(u)) in PARKING_SITES for u in finals):
+        return "parked domain"
+    head = " ".join([page.title, page.description, page.text[:1500]])
+    label = re.escape(host_of(requested).removeprefix("www."))
+    if PARKED_RE.search(head) or re.search(r"\b{}\s+(?:is\s+)?(?:for sale|available)\b".format(label), head, re.I):
+        return "domain for sale"
+    foreign = sorted({site_of(host_of(u)) for u in finals
+                      if site_of(host_of(u)) != asked and not related_url(u, names)})
+    if foreign:
+        return "redirects to {}".format(foreign[0])
+    return None
+
+
+def home_guard(requested: str, names):
+    """`allowed` for fetching a candidate homepage: stay on its site or go somewhere related_url() accepts, so
+    redirects to parking pages or other companies stop before they are fetched."""
+    asked = site_of(host_of(requested))
+
+    def allowed(url: str) -> bool:
+        site = site_of(host_of(url))
+        return bool(site) and site not in PARKING_SITES and (site == asked or related_url(url, names))
+    return allowed
 
 
 def saturated(hex_color: str) -> bool:
@@ -351,6 +406,10 @@ class FetchError(Exception):
     pass
 
 
+class HostNotAllowed(FetchError):
+    """The URL, or a redirect hop, leaves the hosts the caller allows."""
+
+
 class WebFetcher:
     """One per session. `client` is injectable (tests use httpx.MockTransport)."""
 
@@ -387,7 +446,7 @@ class WebFetcher:
         current = normalize_url(url) or url
         for _ in range(max_redirects + 1):
             if allowed is not None and not allowed(current):
-                raise FetchError("host not allowed for this company: {}".format(host_of(current)))
+                raise HostNotAllowed("host not allowed for this company: {}".format(host_of(current)))
             if not self.allowed_by_robots(current):
                 raise FetchError("robots.txt disallows {}".format(urlparse(current).path or "/"))
             with self.client.stream("GET", current, timeout=TIMEOUT_S) as r:

@@ -135,6 +135,7 @@ def main():
     setup_logging()  # key=value console lines + generation-video/output/logs/agent-<date>.ndjson
 
     settings, store, agent, worker = build(args)
+    setup_logging()  # again: build() loaded .env, which may set LOG_LEVEL / LOG_FILE_LEVEL
     if args.cmd == "show":
         ctx = store.latest_context()
         return print_context(ctx) if ctx else print("no context yet; run `python -m agent once`")

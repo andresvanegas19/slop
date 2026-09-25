@@ -4,6 +4,7 @@ import { motion, type Variants } from "motion/react";
 import type { ReactNode, RefObject } from "react";
 import BlobLoader from "@/components/BlobLoader";
 import LiveStatus from "./LiveStatus";
+import { ViewLogLink } from "./LogDrawer";
 import type { MemoryChip, NewVideoSuggestion, PendingOp, ThreadEntry } from "./types";
 import { cn, fade, spring } from "./ui";
 
@@ -94,6 +95,7 @@ function Entry({ entry, actions }: { entry: ThreadEntry; actions?: SuggestionAct
         </details>
       )}
       {entry.memorySources ? <MemoryRow sources={entry.memorySources} /> : entry.ragSources && <small className="text-[10px] text-[#7c7c7c]">Used guidance: {entry.ragSources.join(", ")}</small>}
+      <ViewLogLink at={entry.at} className="mt-1 self-start" />
     </motion.div>
   );
 }
@@ -162,6 +164,7 @@ export default function ChatThread({ threadRef, thread, pendingOp, isEditing, on
           {pendingOp.error ? (
             <motion.div key="pending-error" variants={bubble} className={cn(BUBBLE, "flex-col self-start rounded-bl-[5px] border border-danger-line bg-[#2a121255] text-danger-soft")} role="alert">
               <p className={TEXT}>{pendingOp.error}</p>
+              <ViewLogLink className="mt-1 self-start" />
               <button type="button" className={LINK} onClick={onRetry} disabled={isEditing}>↻ Retry</button>
             </motion.div>
           ) : pendingOp.live ? (

@@ -35,8 +35,8 @@ from .research_tools import (MAX_OPEN_QUESTIONS, MAX_OPTIONS, MAX_QUOTE_CHARS, M
                              clean_quote, norm, quote_in_page)
 from .user_context import expressed_topics, summary_line, user_context, valid_user_id
 from .videos import recent_videos
-from .web import (FetchError, Page, WebFetcher, compact, css_colors, find_dates, host_of, link_category,
-                  normalize_url, prioritized_links, site_of, slugs)
+from .web import (FetchError, HostNotAllowed, Page, WebFetcher, compact, css_colors, find_dates, home_guard,
+                  home_problem, host_of, link_category, normalize_url, prioritized_links, site_of, slugs)
 
 log = logging.getLogger("agent.research")
 
@@ -578,33 +578,45 @@ class ResearchSession:
             d = intent.likely_domain
             candidates += ["https://www.{}/".format(d), "https://{}/".format(d)]
         for s in slugs(intent.company_name):
-            for tld in ("com", "co", "io", "ai"):
+            for tld in ("com", "co", "io", "ai", "app"):
                 candidates += ["https://www.{}.{}/".format(s, tld), "https://{}.{}/".format(s, tld)]
-        seen, checked = set(), 0
+        names = {compact(intent.company_name)} | {compact(s) for s in slugs(intent.company_name)}
+        seen, checked, rejected = set(), 0, set()
         for url in candidates:
-            if url in seen or checked >= 12 or self.stop_event.is_set():
+            if url in seen or checked >= 12 or self.stop_event.is_set() or site_of(host_of(url)) in rejected:
                 continue
             seen.add(url)
             checked += 1
             self.emit("status", status=self.state.status.value, message="checking {}".format(url))
             try:
-                page = self.fetcher.fetch(url, allowed=None)
+                page = self.fetcher.fetch(url, allowed=home_guard(url, names))
+            except HostNotAllowed as e:  # redirected to a parking page or another company's site
+                rejected.add(site_of(host_of(url)))
+                self.emit("status", status=self.state.status.value, message="skipping {}: redirects to {}".format(
+                    site_of(host_of(url)), str(e).rsplit(": ", 1)[-1][:120]))
+                continue
             except Exception:
                 continue
             body = compact(" ".join([page.title, page.description, page.text[:30000]]))
-            names = {compact(intent.company_name)} | {compact(s) for s in slugs(intent.company_name)}
-            if page.status == 200 and any(n and n in body for n in names):
-                with self.lock:
-                    self.state.allowed_hosts = sorted({site_of(host_of(url)), site_of(host_of(page.url))})
-                    self.state.domain = site_of(host_of(page.url))
-                    self.state.home_url = page.url
-                    self.save()
-                self.emit("status", status=self.state.status.value, message="website: {}".format(page.url),
-                          domain=self.state.domain, home_url=page.url)
-                self.round_pages = 0
-                self._remember(url, page)
-                self.brand_colors(page)
-                return
+            if page.status != 200 or not any(n and n in body for n in names):
+                continue
+            problem = home_problem(url, page, names)
+            if problem:  # a parked domain or someone else's site: the www / bare twin will not be better
+                rejected.add(site_of(host_of(url)))
+                self.emit("status", status=self.state.status.value,
+                          message="skipping {}: {}".format(site_of(host_of(url)), problem))
+                continue
+            with self.lock:
+                self.state.allowed_hosts = sorted({site_of(host_of(url)), site_of(host_of(page.url))})
+                self.state.domain = site_of(host_of(page.url))
+                self.state.home_url = page.url
+                self.save()
+            self.emit("status", status=self.state.status.value, message="website: {}".format(page.url),
+                      domain=self.state.domain, home_url=page.url)
+            self.round_pages = 0
+            self._remember(url, page)
+            self.brand_colors(page)
+            return
         self.state.error = ("could not find {}'s website (tried {} addresses); include the domain in the prompt, "
                             "e.g. 'coca-cola.com'".format(intent.company_name, checked))
 

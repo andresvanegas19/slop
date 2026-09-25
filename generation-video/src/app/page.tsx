@@ -6,6 +6,7 @@ import GenerationStage from "@/components/studio/GenerationStage";
 import Composer from "@/components/studio/Composer";
 import Editor from "@/components/studio/Editor";
 import HistoryPanel, { GeneratingRow } from "@/components/studio/HistoryPanel";
+import LogDrawer, { ViewLogLink } from "@/components/studio/LogDrawer";
 import ResearchMessages from "@/components/studio/ResearchMessages";
 import { useStudio } from "@/components/studio/hooks/useStudio";
 import { LABEL, cn, fade, fadeUp } from "@/components/studio/ui";
@@ -127,7 +128,7 @@ export default function Home() {
               ))}
             </AnimatePresence>
             <AnimatePresence mode="popLayout">
-              {s.error && <motion.p key={`error-${s.error}`} className="mx-auto mt-[15px] text-[13px] text-danger" role="alert" {...fadeUp}>{s.error}</motion.p>}
+              {s.error && <motion.p key={`error-${s.error}`} className="mx-auto mt-[15px] text-[13px] text-danger" role="alert" {...fadeUp}>{s.error} <ViewLogLink className="ml-1" /></motion.p>}
               {s.notice && !s.error && <motion.p key={`notice-${s.notice}`} className="mx-auto mt-3 text-[12px] text-[#8a8a8a]" role="status" {...fadeUp}>{s.notice}</motion.p>}
             </AnimatePresence>
             {s.narrationMessages.length > 0 && (
@@ -139,6 +140,7 @@ export default function Home() {
             <p className={cn("mx-auto max-w-[600px] text-[11px] text-faint", hasThread ? "mt-2.5" : "mt-[17px]")}>{s.isAtEnd ? `The playhead is at the end of “${s.openTitle}”: describe what happens next and it becomes a new shot.` : s.isAutoMode ? `Auto: your prompt decides — edit ${s.editWindow ? formatWindow(s.editWindow) : "the selected moment"}, ask a question, extend (“make it 3 seconds longer”), cut (“remove this part”), or attach a clip to append. Press End to continue from the end.` : s.isAppendMode ? `Adds a new shot at the end of “${s.openTitle}”: attach a video or pick one from history to append it as-is, or describe the next shot to generate it. Esc or ✕ goes back to new videos.` : !s.isContinueMode && s.attachment ? "Your video becomes a new project you can edit moment by moment or extend with more shots. A prompt is optional." : s.isContinueMode ? `Your message applies to ${s.editWindow ? formatWindow(s.editWindow) : `${s.targetSec.toFixed(1)}s`} of “${s.openTitle}” (frame ${s.targetFrame + 1}) — drag on the timeline strip to choose exactly which part to change. Describe a change to regenerate it and re-render the${s.project ? ` ${s.project.durationSeconds}s` : ""} video, or ask a question about it. Pause or use “Grab this frame” to pick a moment; Esc or ✕ goes back to new videos.` : <>{s.mediaType === "rawtree" ? "Summarizes the latest competitor moves from RawTree into a short video. No prompt needed." : s.mediaType === "ad" ? `Writes a ${s.presetLength}-second multi-scene ad (16:9) from your product or offer, then opens it in the editor. Takes 1–3 minutes.` : s.mediaType === "company" ? `Writes a ${s.presetLength}-second brand video about your company, then opens it in the editor. Takes 1–3 minutes.` : s.mediaType === "storyboard" ? "Select a valid local storyboard JSON file before rendering. Narration warnings must be reviewed before the server will render." : `Every prompt becomes a ${s.clipCopy} video with sound. Use + for ads, company shorts, or competitor summaries — or attach, drop, or paste a video to start from your own footage.`} Your BFL key stays on the server.</>}</p>
           </div>
         </section>
+        <LogDrawer />
       </main>
     </MotionConfig>
   );

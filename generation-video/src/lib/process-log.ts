@@ -54,7 +54,7 @@ export function installProcessLogging() {
       child.once("error", (error) => runInTrace(trace, () => log("warn", "proc_failed", { tool, operation, error: error.message, durationMs: Date.now() - startedAt })));
       child.once("close", (code, signal) => runInTrace(trace, () => {
         const failed = code !== 0;
-        log(failed ? "warn" : "debug", failed ? "proc_failed" : "proc_done", {
+        log(failed ? "warn" : tool === "ffprobe" ? "debug" : "info", failed ? "proc_failed" : "proc_done", {
           tool,
           operation,
           exitCode: code,
