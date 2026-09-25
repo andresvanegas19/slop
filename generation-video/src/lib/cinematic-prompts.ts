@@ -275,10 +275,15 @@ function scriptBlock(brief: string, scenes: CinematicSceneInput[], companyContex
 async function writeBible(brief: string, scenes: CinematicSceneInput[], companyContext: string | undefined, stream: boolean) {
   const fallback = fallbackBible(brief, scenes);
   try {
-    const result = await complete(BIBLE_SYSTEM, `${scriptBlock(brief, scenes, companyContext)}\n\nWrite the four continuity lines now.`, 1_500, 0.4, stream);
-    const parsed = parseBible(result.content);
+    // The default model reasons before answering; an empty "length" reply gets one retry with a bigger budget.
+    let parsed: Partial<ContinuityBible> = {};
+    for (let attempt = 0, maxTokens = 2_400; attempt < 2; attempt += 1, maxTokens *= 2) {
+      const result = await complete(BIBLE_SYSTEM, `${scriptBlock(brief, scenes, companyContext)}\n\nWrite the four continuity lines now.`, maxTokens, 0.4, stream && attempt === 0);
+      parsed = parseBible(result.content);
+      logInfo("cinematic_bible_written", { attempt, found: Object.keys(parsed).length, finishReason: result.finishReason, chars: result.content.length });
+      if (Object.keys(parsed).length > 0 || result.finishReason !== "length") break;
+    }
     const found = Object.keys(parsed).length;
-    logInfo("cinematic_bible_written", { found, finishReason: result.finishReason, chars: result.content.length });
     if (found === 0) return { bible: fallback, source: "fallback" as const };
     return { bible: { ...fallback, ...parsed }, source: "llm" as const };
   } catch (error) {

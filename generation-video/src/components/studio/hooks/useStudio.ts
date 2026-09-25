@@ -6,7 +6,7 @@
  */
 import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, SyntheticEvent, useEffect, useRef, useState } from "react";
 import type { AppendResult, AskResult, BusyState, CommandResult, ContinueAction, FrameGrab, HistoryItem, HistoryKind, LiveProgress, MediaType, PendingOp, Project, ProjectFrame, RangeDrag, RenderResult, ThreadEntry, TimeWindow } from "../types";
-import { FRAME_STEP, MAX_UPLOAD_BYTES, RANGE_MIN_SEC, clampRange, captureVideoThumb, defaultRange, errorMessage, formatBytes, formatWindow, frameIndexAt, historyItemFromProject, isAbortError, isProject, isTimeWindow, isVideoFile, issueMessages, kindLabel, mergeThread, nowIso, ragLabels, readJson, threadFromProject } from "../utils";
+import { FRAME_STEP, MAX_UPLOAD_BYTES, RANGE_MIN_SEC, clampRange, captureVideoThumb, defaultRange, errorMessage, formatBytes, formatWindow, frameIndexAt, historyItemFromProject, isAbortError, isProject, isTimeWindow, isVideoFile, issueMessages, kindLabel, mergeThread, nowIso, memoryChips, ragLabels, readJson, threadFromProject } from "../utils";
 import { setHistoryOpen, updateHistory, useHistory, useHistoryOpen } from "./historyStore";
 import { loadContinueMode, loadLocalThread, saveContinueMode, saveLocalThread, userHeaders } from "./storage";
 import { useAbortSlot } from "./useAbortSlot";
@@ -896,6 +896,7 @@ export function useStudio() {
           afterUrl: appended?.imageUrl,
           enhancedPrompt,
           ragSources: ragLabels(result.ragSources),
+          memorySources: memoryChips(result.memorySources),
         },
       ]);
       if (openProjectIdRef.current !== projectId) return;
@@ -1179,6 +1180,7 @@ export function useStudio() {
           afterUrl: action === "edit_range" ? editedFrame?.imageUrl : firstAppended?.imageUrl,
           enhancedPrompt: typeof result.enhancedPrompt === "string" && result.enhancedPrompt.trim() ? result.enhancedPrompt.trim() : undefined,
           ragSources: ragLabels(result.ragSources),
+          memorySources: memoryChips(result.memorySources),
         },
       ]);
       if (openProjectIdRef.current !== projectId) return;

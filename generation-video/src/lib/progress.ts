@@ -7,7 +7,11 @@ export type ProgressEvent =
   | { type: "intent"; action: string; detectedBy: string; atEnd: boolean; window?: { startSec: number; endSec: number } }
   | { type: "token"; field: "enhancedPrompt" | "reply"; text: string }
   | { type: "prompt"; enhancedPrompt: string }
-  | { type: "preview"; imageUrl: string; label: string }
+  | { type: "preview"; imageUrl: string; label: string; storyId?: string; beat?: number }
+  /** /api/stories: a story was written (stills follow as `preview` events with storyId + beat). */
+  | { type: "story"; story: Record<string, unknown> }
+  /** /api/stories/:id/render: per-story render status. */
+  | { type: "story_status"; storyId: string; status: string; elapsedMs: number; projectId?: string; videoUrl?: string; error?: string }
   | { type: "progress"; stage: "image" | "video"; status: string; progress?: number; elapsedMs: number }
   | { type: "done"; [key: string]: unknown }
   | { type: "error"; status: number; error: string };

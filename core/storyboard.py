@@ -14,8 +14,9 @@ WORDS_PER_SEC = 2.5
 
 # Emotional, phone-filmed real footage: people living with the change, never abstract graphics.
 PHONE_FOOTAGE_PREFIX = ("Handheld smartphone footage, natural available light, candid real people, genuine emotion, "
-                        "phone-lens shallow depth of field, true-to-life warm color, intimate close and medium framing, "
-                        "subtle handheld sway. No text, letters, numbers or logos in frame.")
+                        "phone-lens shallow depth of field, true-to-life warm color, "
+                        "intimate close and medium framing, subtle handheld sway. "
+                        "No text, letters, numbers or logos in frame.")
 STYLE = StyleGuide(style_id="phone-footage-v1", prompt_prefix=PHONE_FOOTAGE_PREFIX,
                    palette=["#F3E3CF", "#C98B5B", "#6B7B83", "#2F2A26"], seed=42)
 

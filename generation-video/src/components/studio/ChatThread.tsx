@@ -4,7 +4,7 @@ import { motion, type Variants } from "motion/react";
 import type { ReactNode, RefObject } from "react";
 import BlobLoader from "@/components/BlobLoader";
 import LiveStatus from "./LiveStatus";
-import type { PendingOp, ThreadEntry } from "./types";
+import type { MemoryChip, PendingOp, ThreadEntry } from "./types";
 import { cn, fade, spring } from "./ui";
 
 type ChatThreadProps = {
@@ -76,8 +76,51 @@ function Entry({ entry }: { entry: ThreadEntry }) {
           <p className={cn(TEXT, "mt-1 text-[#bdbdbd]")}>{entry.enhancedPrompt}</p>
         </details>
       )}
-      {entry.ragSources && <small className="text-[10px] text-[#7c7c7c]">Used guidance: {entry.ragSources.join(", ")}</small>}
+      {entry.memorySources ? <MemoryRow sources={entry.memorySources} /> : entry.ragSources && <small className="text-[10px] text-[#7c7c7c]">Used guidance: {entry.ragSources.join(", ")}</small>}
     </motion.div>
+  );
+}
+
+const MEMORY_ICON: Record<MemoryChip["kind"], string> = { knowledge: "📚", video: "🎞", user_prompt: "💬", research: "🔎", example: "✦" };
+
+function sinceLabel(at?: string) {
+  const time = at ? Date.parse(at) : NaN;
+  if (!Number.isFinite(time)) return "";
+  const minutes = Math.max(0, (Date.now() - time) / 60_000);
+  return minutes < 60 ? `${Math.round(minutes)}m ago` : minutes < 2_880 ? `${Math.round(minutes / 60)}h ago` : `${Math.round(minutes / 1_440)}d ago`;
+}
+
+function chipLabel(source: MemoryChip) {
+  if (source.kind === "knowledge") {
+    const [doc, section] = source.title.split(" — ");
+    return section ? `${doc.split(" ").slice(0, 2).join(" ")} › ${section}` : doc;
+  }
+  if (source.kind === "user_prompt") return [source.title === "Your usual style" ? "your usual style" : `“${source.title}”`, sinceLabel(source.at)].filter(Boolean).join(" · ");
+  if (source.kind === "example") return ["past edit", sinceLabel(source.at)].filter(Boolean).join(" · ");
+  return source.title;
+}
+
+/** "Memory used" chips: where the context for this reply came from (docs, past videos, your prompts, research). */
+function MemoryRow({ sources }: { sources: MemoryChip[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[10px] text-[#7c7c7c]" aria-label="Memory used">
+      <span className="mr-0.5">Memory used</span>
+      {sources.slice(0, 6).map((source) => {
+        const body = (
+          <>
+            <span aria-hidden="true">{MEMORY_ICON[source.kind]}</span>
+            <span className="max-w-[180px] truncate">{chipLabel(source)}</span>
+          </>
+        );
+        const className = "inline-flex max-w-[210px] items-center gap-1 rounded-full border border-[#2a2a2a] bg-[#161616] px-1.5 py-[1px] text-[#8d8d8d]";
+        const title = `${source.kind.replace("_", " ")} · ${source.ref} · score ${source.score}`;
+        return source.url ? (
+          <a key={`${source.kind}:${source.ref}`} className={cn(className, "hover:border-[#3a3a3a] hover:text-[#b5b5b5]")} href={source.url} target="_blank" rel="noreferrer" title={title}>{body}</a>
+        ) : (
+          <span key={`${source.kind}:${source.ref}`} className={className} title={title}>{body}</span>
+        );
+      })}
+    </div>
   );
 }
 

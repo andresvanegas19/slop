@@ -309,7 +309,10 @@ export async function retrieveMemory(query: string, options: MemoryOptions = {})
       wants("video") ? videoCandidates(q, { ...options, projectId }) : Promise.resolve([]),
       wants("user_prompt") && userId ? userPromptCandidates(q, userId, projectId) : Promise.resolve([]),
       wants("research") && researchSessionId && SAFE_ID.test(researchSessionId) ? researchCandidates(q, researchSessionId) : Promise.resolve([]),
-    ].map((promise) => promise.catch(() => [] as Candidate[])));
+    ].map((promise) => promise.catch((error: unknown) => {
+      logInfo("memory_source_failed", { reason: error instanceof Error ? error.message.slice(0, 200) : String(error) });
+      return [] as Candidate[];
+    })));
 
     const ranked = groups.flat().map((candidate) => ({ candidate, value: decayed(candidate) })).sort((a, b) => b.value - a.value);
     if (!ranked.length) return { text: "", sources: [] };

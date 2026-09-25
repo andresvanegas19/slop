@@ -444,7 +444,7 @@ def test_research_session_uses_past_videos(settings):
     assert json.loads(tool.invoke({}))["videos"][0]["project_id"] == "p1"
 
 
-# --- the user's own history (RawTree slop_human_user_prompts) ----------------------------------------------------------
+# --- the user's own history (RawTree slop_human_user_prompts) ------------------------------------------------------
 PROMPT_ROWS = [
     {"event_id": "e1", "user_id": "u_1", "surface": "preset", "prompt": "A nostalgic, warm 15 seconds ad for Acme Cola",
      "action": "generate", "outcome": "ok", "duration_sec": 15, "created_at": "2026-09-25 10:00:00"},
@@ -472,8 +472,8 @@ def test_user_context_summary_sql_and_missing_table(settings):
     rawtree = PromptRawTree()
     ctx = user_context(rawtree, "u_1", 15)
     assert rawtree.sql[-1].startswith("SELECT event_id, user_id, project_id, surface, prompt, action")
-    assert rawtree.sql[-1].endswith("FROM slop_human_user_prompts WHERE toString(user_id) = 'u_1' ORDER BY created_at DESC "
-                                    "LIMIT 15")
+    assert rawtree.sql[-1].endswith(
+        "FROM slop_human_user_prompts WHERE toString(user_id) = 'u_1' ORDER BY created_at DESC LIMIT 15")
     assert ctx["count"] == 2 and {"nostalgic", "warm", "cinematic", "golden hour"} <= set(ctx["style_words"])
     assert ctx["durations"][0] == "15s" and ctx["failures"][0]["error"] == "BFL 429"
     assert set(expressed_topics(ctx)) == {"tone", "format"}

@@ -330,6 +330,10 @@ class ResearchSession:
                 "theme_color": page.theme_color, "colors": page.colors, "logo_url": page.logo_url}
         visit = PageVisit(url=page.url, title=page.title, description=page.description, status=page.status,
                           chars=len(page.text), fetched_at=_now())
+        if page.url in self.pages and page.url != requested:  # a redirect to a page we already have
+            with self.lock:
+                self.pages[requested] = self.pages[page.url]
+            return self.pages[page.url]
         with self.lock:
             self.pages[requested] = data
             self.pages[page.url] = data
@@ -818,7 +822,7 @@ class ResearchSession:
             if re.search(r"©|copyright|all rights reserved", f.quote, re.I):
                 continue
             dates = find_dates(f.quote) or find_dates(f.claim) or find_dates(f.evidence_url)
-            years = [int(y) for y in re.findall(r"\b(19\d\d|20\d\d)\b", " ".join(dates) or f.quote)]
+            years = [int(y) for y in re.findall(r"\b(1[6-9]\d\d|20\d\d)\b", " ".join(dates) or f.quote)]
             if years and max(years) < this_year - 2:  # history, not news
                 continue
             news.append(NewsItem(title=_clip(f.claim, 300), date=dates[0] if dates else None, url=f.evidence_url))

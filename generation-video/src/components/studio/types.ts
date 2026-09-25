@@ -8,8 +8,10 @@ export type ProjectFrame = { index: number; imageUrl: string; prompt: string; st
 export type FrameEdit = { atSec: number; windowSec?: number; rangeStartSec?: number; rangeEndSec?: number; prompt: string; at: string };
 export type RangeDrag = { mode: "new" | "start" | "end" | "move"; startX: number; anchorSec: number; original: TimeWindow | null; moved: boolean; pointerId: number };
 export type TimeWindow = { startSec: number; endSec: number };
-export type ChatMessage = { role: "user" | "assistant"; text: string; at: string; edited?: boolean; atSec?: number; rangeStartSec?: number; rangeEndSec?: number; grabbedFrameUrl?: string; enhancedPrompt?: string; ragSources?: unknown };
-export type ThreadEntry = { id: string; role: "user" | "assistant"; text: string; at: string; context?: string; thumbUrl?: string; edited?: boolean; note?: string; beforeUrl?: string; afterUrl?: string; enhancedPrompt?: string; ragSources?: string[]; action?: { label: string; detectedBy: "llm" | "rules" } };
+export type ChatMessage = { role: "user" | "assistant"; text: string; at: string; edited?: boolean; atSec?: number; rangeStartSec?: number; rangeEndSec?: number; grabbedFrameUrl?: string; enhancedPrompt?: string; ragSources?: unknown; memorySources?: unknown };
+/** Where a piece of memory used for a reply came from (server MemorySource). */
+export type MemoryChip = { kind: "knowledge" | "video" | "user_prompt" | "research" | "example"; title: string; ref: string; url?: string; at?: string; score: number };
+export type ThreadEntry = { id: string; role: "user" | "assistant"; text: string; at: string; context?: string; thumbUrl?: string; edited?: boolean; note?: string; beforeUrl?: string; afterUrl?: string; enhancedPrompt?: string; ragSources?: string[]; memorySources?: MemoryChip[]; action?: { label: string; detectedBy: "llm" | "rules" } };
 export type PendingOp = { user: ThreadEntry; detail: string; error: string | null; live?: LiveProgress };
 /** What the server has reported so far while streaming an operation (see stream.ts / live.ts). */
 export type LiveStep = { stage: string; label: string; at: number };
@@ -29,9 +31,9 @@ export type HistoryItem = { projectId: string; title: string; videoUrl: string; 
 export type Upload = { id: string; videoUrl: string; thumbUrl: string; durationSeconds: number; width: number; height: number; hasAudio: boolean; filename: string };
 export type Attachment = { key: number; file: File; previewUrl: string; progress: number; status: "uploading" | "done" | "error"; localDuration?: number; upload?: Upload; error?: string };
 export type ContinueAction = "auto" | "edit" | "append";
-export type CommandResult = { action?: unknown; detectedBy?: unknown; summary?: unknown; reply?: unknown; project?: unknown; window?: unknown; appendedFrameIndexes?: unknown; removed?: unknown; enhancedPrompt?: unknown; ragSources?: unknown; grabbedFrameUrl?: unknown; atEnd?: unknown; error?: unknown };
+export type CommandResult = { action?: unknown; detectedBy?: unknown; summary?: unknown; reply?: unknown; project?: unknown; window?: unknown; appendedFrameIndexes?: unknown; removed?: unknown; enhancedPrompt?: unknown; ragSources?: unknown; memorySources?: unknown; grabbedFrameUrl?: unknown; atEnd?: unknown; error?: unknown };
 export type BusyState = { label: string; detail: string };
-export type AppendResult = { project?: unknown; appendedFrameIndex?: unknown; enhancedPrompt?: unknown; ragSources?: unknown; error?: unknown };
+export type AppendResult = { project?: unknown; appendedFrameIndex?: unknown; enhancedPrompt?: unknown; ragSources?: unknown; memorySources?: unknown; error?: unknown };
 export type FrameGrab = { key: number; atSec: number; thumbUrl: string | null; captured: boolean };
 
 export type RenderIssue = { path?: unknown; code?: unknown; message?: unknown };
