@@ -1,0 +1,3 @@
+# Preserve the output directory while excluding generated media and manifests.
+*
+!.gitignore

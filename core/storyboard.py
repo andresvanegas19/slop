@@ -12,19 +12,32 @@ MIN_SIGNIFICANCE = 0.6
 TOP_N = 5
 WORDS_PER_SEC = 2.5
 
-STYLE = StyleGuide(
-    prompt_prefix="Flat isometric editorial illustration, clean vector shapes, deep navy background, "
-                  "teal and coral accents, soft studio lighting, generous negative space, "
-                  "NO text, NO letters, NO numbers, NO logos.",
-    palette=["#0B1B3A", "#14B8A6", "#F97360", "#F8FAFC"], seed=42)
+# Emotional, phone-filmed real footage: people living with the change, never abstract graphics.
+PHONE_FOOTAGE_PREFIX = ("Handheld smartphone footage, natural available light, candid real people, genuine emotion, "
+                        "phone-lens shallow depth of field, true-to-life warm color, intimate close and medium framing, "
+                        "subtle handheld sway. No text, letters, numbers or logos in frame.")
+STYLE = StyleGuide(style_id="phone-footage-v1", prompt_prefix=PHONE_FOOTAGE_PREFIX,
+                   palette=["#F3E3CF", "#C98B5B", "#6B7B83", "#2F2A26"], seed=42)
 
+# Human moments: people reacting to the change, at work, at home, on the street. Screens face away from the lens
+# so the image model has no reason to draw text.
 IMAGE_BY_CATEGORY = {
-    "price_cut": "a large price tag sliced cleanly in half by a glowing blade, small coins tumbling out",
-    "price_increase": "a price tag inflating like a balloon and drifting upward",
-    "pricing_model": "a row of identical chairs dissolving into a flowing meter gauge",
-    "new_plan": "a staircase of glowing product tiers with a brand-new step appearing, spotlight on it",
-    "deprecation": "a bright doorway closing, small figures holding laptops left standing outside",
+    "price_cut": "a small-business owner at her kitchen table exhaling with relief and smiling at her laptop, "
+                 "screen turned away from camera, morning light, coffee mug beside her",
+    "price_increase": "a startup founder at a cluttered desk rubbing his forehead as he reads his phone, "
+                      "colleagues softly blurred behind him, late-afternoon window light",
+    "pricing_model": "two coworkers leaning over one laptop in a busy office, one pointing, both surprised and "
+                     "curious, screen facing away from camera",
+    "new_plan": "a young team in a sunlit co-working space crowding around one phone, one of them grinning at the "
+                "news, candid laughter",
+    "deprecation": "a remote worker at home by a rainy window pausing mid-typing, a quiet disappointed look, "
+                   "laptop screen facing away",
 }
+TITLE_VISUAL = ("a busy city sidewalk at morning rush, people glancing at their phones on the way to work, "
+                "one woman looking up with a curious expression")
+QUIET_VISUAL = "a calm office late in the afternoon, people working quietly at their desks, an ordinary unhurried day"
+OUTRO_VISUAL = ("a team lead stepping out of an office onto a sunny street, taking a breath and looking ahead with a "
+                "confident half-smile")
 
 
 def is_meaningful(op: PatchOp) -> bool:
@@ -108,7 +121,7 @@ class StoryboardComposer:
             tracked, n, "move" if n == 1 else "moves", "s" if n == 1 else ""),
             {"headline": market + ": what changed", "sub": "{} tracked · {} key move{}".format(
                 tracked, n, "" if n == 1 else "s")},
-            "a wide constellation of small glowing nodes, a few brighter than the rest")
+            TITLE_VISUAL)
 
         copies = {}
         for i, (p, op) in enumerate(picked):
@@ -125,7 +138,7 @@ class StoryboardComposer:
         if quiet > 0:
             add_scene("quiet", 3, "{} others: no real change.".format(quiet),
                       {"headline": "{} competitors: no real change".format(quiet)},
-                      "a calm sea of dim nodes, gentle ripples fading out")
+                      QUIET_VISUAL)
 
         opp = next((i for i, (_, op) in enumerate(picked) if category(op) in ("price_increase", "deprecation")), None)
         label = "Biggest opening" if opp is not None else "Biggest threat"
@@ -135,7 +148,7 @@ class StoryboardComposer:
         short = fallback_copy(names.get(op_k.entity_id, op_k.entity_id.title()), op_k)["spoken"]  # label + line must fit 4 s
         add_scene("outro", 4, "{}: {}".format(label, short),
                   {"headline": label, "sub": copies[cid]["headline"]},
-                  "a bright open path leading forward through a field of dim nodes", [cid])
+                  OUTRO_VISUAL, [cid])
 
         patch_ids = sorted({p.patch_id for p, _ in picked})
         sid = hashlib.sha256("|".join(patch_ids + [SCHEMA_VERSION]).encode()).hexdigest()[:24]

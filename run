@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Runs the web app (Next.js) and the company agent together. Ctrl-C stops both.
+#
+#   ./run                      # web + full agent: core cycle each tick AND publish to RawTree (rows are PERMANENT)
+#   ./run --no-publish         # full agent, but nothing is written to RawTree
+#   ./run --no-core            # agent only reads/briefs, no core cycle
+#   ./run --no-llm             # agent without OpenRouter (deterministic briefs; implies --no-core)
+#   ./run web | ./run agent    # only one of them (extra flags go to the agent)
+#
+# Env: PORT (web, default 3000), AGENT_PORT (default 8765), AGENT_INTERVAL_S, ... (see .env.example).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WEB_DIR="$ROOT/generation-video"
+PY="$ROOT/.venv/bin/python"
+
+mode="all"
+case "${1:-}" in
+  web|agent) mode="$1"; shift ;;
+esac
+
+# Default agent = core cycle + publish. --no-core / --no-publish opt out; other flags pass through.
+core=1; publish=1; agent_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-core) core=0 ;;
+    --no-publish) publish=0 ;;
+    --run-core) core=1 ;;
+    --publish) publish=1 ;;
+    --no-llm) core=0; agent_args+=("$arg") ;;
+    *) agent_args+=("$arg") ;;
+  esac
+done
+(( core )) && agent_args+=("--run-core")
+(( publish )) && agent_args+=("--publish")
+
+start_web=0; start_agent=0
+[[ "$mode" == "all" || "$mode" == "web" ]] && start_web=1
+[[ "$mode" == "all" || "$mode" == "agent" ]] && start_agent=1
+
+if (( start_agent )); then
+  if [[ ! -x "$PY" ]]; then
+    echo "Missing $PY. Create it: python3.12 -m venv .venv && .venv/bin/pip install -e . || .venv/bin/pip install httpx pydantic pyyaml langchain-core langchain-openai" >&2
+    exit 1
+  fi
+  if ! "$PY" -c "import langchain_core, langchain_openai" 2>/dev/null; then
+    echo "Installing agent dependencies into .venv…"
+    "$PY" -m pip install -q httpx pydantic pyyaml langchain-core langchain-openai
+  fi
+fi
+
+if (( start_web )) && lsof -iTCP:"${PORT:-3000}" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+  # Next.js allows one `next dev` per folder; reuse the one already running.
+  echo "Web already running on http://localhost:${PORT:-3000}; reusing it."
+  start_web=0
+  (( start_agent )) || exit 0
+fi
+
+if (( start_web )); then
+  command -v npm >/dev/null || { echo "npm is required for the web app." >&2; exit 1; }
+  if [[ ! -d "$WEB_DIR/node_modules" ]]; then
+    echo "Installing web dependencies…"
+    (cd "$WEB_DIR" && npm install)
+  fi
+fi
+
+pids=()
+stop_tree() {  # the subshell, its pipeline (python/npm, sed) and their children (next dev)
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do stop_tree "$child"; done
+  kill -TERM "$pid" 2>/dev/null || true
+}
+cleanup() {
+  trap - INT TERM EXIT
+  echo; echo "Stopping…"
+  for pid in ${pids[@]+"${pids[@]}"}; do stop_tree "$pid"; done
+  wait 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+if (( start_agent )); then
+  (cd "$ROOT" && exec "$PY" -m agent worker ${agent_args[@]+"${agent_args[@]}"} 2>&1 | sed -u 's/^/[agent] /') &
+  pids+=("$!")
+fi
+
+if (( start_web )); then
+  (cd "$WEB_DIR" && exec npm run dev 2>&1 | sed -u 's/^/[web]   /') &
+  pids+=("$!")
+fi
+
+(( start_agent )) && echo "Agent: core cycle $([[ $core == 1 ]] && echo on || echo off) · publish to RawTree $([[ $publish == 1 ]] && echo "ON (permanent rows)" || echo off)"
+echo "Running: $([[ $start_web == 1 ]] && echo "web http://localhost:${PORT:-3000} " || true)$([[ $start_agent == 1 ]] && echo "agent http://127.0.0.1:${AGENT_PORT:-8765}/health")  (Ctrl-C to stop)"
+
+# Exit (and stop the other one) as soon as either process ends. Polling: macOS bash 3.2 has no `wait -n`.
+while :; do
+  for pid in "${pids[@]}"; do
+    kill -0 "$pid" 2>/dev/null || { echo "A process exited; stopping the rest."; exit 1; }
+  done
+  sleep 1
+done

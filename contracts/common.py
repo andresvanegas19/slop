@@ -10,4 +10,9 @@ TABLES = {
     "media": TABLE_PREFIX + "_media_events",
     "evaluation": TABLE_PREFIX + "_evaluation_events",
     "storyboard": TABLE_PREFIX + "_build",         # B -> C handoff: StoryboardRecord rows
+    "agent_context": TABLE_PREFIX + "_agent_context_events",  # CompanyContext rows from agent/
+    "agent_run": TABLE_PREFIX + "_agent_run_events",          # AgentRunRecord rows from agent/
+    "research": TABLE_PREFIX + "_research_events",            # ResearchEventRow rows from agent/research.py
+    "video": TABLE_PREFIX + "_video_events",                  # video versions published by the web app (read-only here)
+    "user_prompts": TABLE_PREFIX + "_user_prompts",           # user prompts logged by the web app (read-only here)
 }

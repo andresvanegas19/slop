@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/* Design tokens: every --color-NAME becomes bg-NAME, text-NAME and border-NAME utilities (e.g. bg-panel text-muted border-border). */
+@theme {
+  --font-sans: Arial, Helvetica, sans-serif;
+
+  --color-page: #050505;
+  --color-panel: #101010;
+  --color-border: #2c2c2c;
+  --color-text: #f7f7f7;
+  --color-muted: #a2a2a2;
+  --color-faint: #737373;
+  --color-blue: #416bc5;
+  --color-blue-hover: #527add;
+  --color-accent: #4f6fe0;
+  --color-green: #5cbf8a;
+  --color-mint: #8fd4a0;
+  --color-link: #9fb6e8;
+
+  /* Neutral surfaces: chips/buttons, the composer field, raised cards. */
+  --color-chip: #1c1c1c;
+  --color-chip-hover: #292929;
+  --color-chip-line: #393939;
+  --color-field: #202020;
+  --color-surface: #1a1a1a;
+
+  /* Blue "selection" chips (grab card, continue chip, action pills). */
+  --color-info-line: #2d4a86;
+  --color-info-bg: #121b2e;
+  --color-info-text: #d5e2ff;
+
+  /* Success (edited / sound on) and danger (cut / remove / errors). */
+  --color-ok-line: #22402b;
+  --color-ok-bg: #0f2415;
+  --color-danger: #ff9b9b;
+  --color-danger-soft: #ffb0b0;
+  --color-danger-line: #5a2a2a;
+  --color-danger-bg: #2a1212;
+  --color-danger-muted: #7a3030;
+  --color-danger-strong: #b33a3a;
+
+  --animate-spin-fast: spin-fast .8s linear infinite;
+  --animate-grab-ring: grab-ring .9s ease-out both;
+  --animate-window-flash: window-flash 1.8s ease-out both;
+  --animate-stage-pulse: stage-pulse .7s ease-out both;
+}
+
+@layer base {
+  body { background: var(--color-page); color: var(--color-text); }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  /* The studio panel widths, shared by the fixed panel and the stage padding. */
+  :root { --panel-width: 350px; --editor-width: min(60vw, 1100px); }
+}
+
+/* Keyframes Tailwind can't express as utilities. */
+@keyframes spin-fast { to { transform: rotate(360deg); } }
+@keyframes grab-ring {
+  from { opacity: .9; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(7); }
+}
+@keyframes window-flash {
+  0%, 30% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes stage-pulse {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+

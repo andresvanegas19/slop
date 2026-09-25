@@ -41,7 +41,7 @@ class Scene(BaseModel):
 
 
 class StyleGuide(BaseModel):
-    style_id: str = "navy-editorial-v1"
+    style_id: str = "phone-footage-v1"
     prompt_prefix: str
     palette: list[str]
     seed: int
