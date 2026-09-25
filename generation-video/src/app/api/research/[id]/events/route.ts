@@ -1,6 +1,7 @@
 import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { agentErrorResponse, agentFetch, badSessionId } from "@/lib/research-agent";
+import { logWarn } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,7 +51,9 @@ async function routeGET(request: Request, { params }: { params: Promise<{ id: st
         const { done, value } = await reader.read();
         if (done) controller.close();
         else controller.enqueue(value);
-      } catch {
+      } catch (error) {
+        // The browser leaving is normal; the agent dropping the stream is not. The client reconnects either way.
+        if (!request.signal.aborted) logWarn("research_events_stream_failed", { error: error instanceof Error ? error.message : String(error) });
         controller.close();
       }
     },

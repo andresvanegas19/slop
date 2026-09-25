@@ -2,7 +2,7 @@ import { loadEnvConfig } from "@next/env";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
-import { currentTrace, log, logError, logException, logInfo } from "@/lib/runtime-log";
+import { currentTrace, log, logError, logException, logInfo, logWarn } from "@/lib/runtime-log";
 import type { Storyline } from "@/lib/storyline";
 import { ANONYMOUS_USER, parseUserId } from "@/lib/user-context";
 
@@ -161,7 +161,7 @@ function agentReply(status: number, body: Record<string, unknown>, route: string
       { status: 501 },
     );
   }
-  if (status >= 400) logInfo("research_agent_error", { route, status, error: String(body.error ?? "").slice(0, 200) });
+  if (status >= 400) (status >= 500 ? logWarn : logInfo)("research_agent_error", { route, status, error: String(body.error ?? "").slice(0, 200) });
   return NextResponse.json(body, { status });
 }
 

@@ -1,5 +1,6 @@
 """Research sessions, offline: a fixture website behind httpx.MockTransport, a scripted fake Liquid, a fake RawTree."""
 import json
+import logging
 import socket
 import threading
 import time
@@ -263,6 +264,30 @@ def test_unknown_website_is_an_error(settings):
     sid = manager.start("a video for Nonexistent Widgets", looping=False)
     view = wait_done(manager, sid)
     assert view["status"] == "error" and "website" in view["error"]
+    assert "www.nonexistent-widgets.com: HTTP 404" in view["error"], "says why each address was not the site"
+
+
+def test_unexpected_error_while_resolving_is_logged_not_swallowed(settings, caplog):
+    calls = []
+
+    class BuggyOnce(WebFetcher):
+        def fetch(self, url, allowed=None, max_redirects=5):
+            calls.append(url)
+            if url == HOME + "/" and calls.count(url) == 1:
+                raise TypeError("a bug in the fetcher")
+            return super().fetch(url, allowed=allowed, max_redirects=max_redirects)
+
+    fetcher = lambda: BuggyOnce(httpx.Client(transport=httpx.MockTransport(site_handler([])),  # noqa: E731
+                                             headers={"User-Agent": USER_AGENT}))
+    manager = ResearchManager(settings, ResearchStore(settings.agent_db), llm_factory=None,
+                              outbox=AgentStore(settings.agent_db), fetcher_factory=fetcher)
+    with caplog.at_level(logging.ERROR, logger="agent"):
+        sid = manager.start("a video for Acme Cola", looping=False)
+        view = wait_done(manager, sid)
+    assert view["status"] == "done" and view["domain"] == "acmecola.com", "the next address is still tried"
+    assert any(r.exc_info and "checking https://www.acmecola.com/" in r.getMessage() for r in caplog.records)
+    errors = [e for e in manager.store.events(sid) if e["type"] == "error"]
+    assert errors and errors[0]["where"] == "resolve" and "TypeError" in errors[0]["message"]
 
 
 def test_home_problem_spots_parked_domains_and_other_companies():
