@@ -1,0 +1,84 @@
+{
+  "storyboard_id": "sb_2026-09-25T18:00Z_5s",
+  "source_cycle_id": "cyc_2026-09-25T18:00Z",
+  "title": "Project management SaaS: This Week",
+  "total_duration_sec": 5,
+  "style": {
+    "prompt_prefix": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos.",
+    "palette": [
+      "#0B1B3A",
+      "#14B8A6",
+      "#F97360",
+      "#F8FAFC"
+    ],
+    "seed": 42,
+    "aspect_ratio": "16:9",
+    "resolution": "1920x1080"
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "start_sec": 0,
+      "duration_sec": 1.5,
+      "type": "title",
+      "narration": "Two moves matter.",
+      "on_screen_text": {
+        "headline": "Project management SaaS: This Week",
+        "sub": "30 competitors · 2 key moves"
+      },
+      "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a wide constellation of 30 small glowing nodes, 5 of them brighter than the rest",
+      "motion": "slow zoom out",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": []
+    },
+    {
+      "scene": 2,
+      "start_sec": 1.5,
+      "duration_sec": 1.75,
+      "type": "change",
+      "narration": "Taskwave cuts twenty percent.",
+      "on_screen_text": {
+        "headline": "Taskwave Pro: -20%",
+        "competitor": "Taskwave",
+        "rank": 1
+      },
+      "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a large price tag sliced cleanly in half by a glowing blade, small coins tumbling out",
+      "motion": "slow push in",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": [
+        "chg_001"
+      ]
+    },
+    {
+      "scene": 3,
+      "start_sec": 3.25,
+      "duration_sec": 1.75,
+      "type": "change",
+      "narration": "Orbitask kills free plan.",
+      "on_screen_text": {
+        "headline": "Orbitask kills its free plan Nov 1",
+        "competitor": "Orbitask",
+        "rank": 3,
+        "sub": "Biggest opening"
+      },
+      "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a bright doorway closing, small figures holding laptops left standing outside",
+      "motion": "slow push in",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": [
+        "chg_003"
+      ]
+    }
+  ],
+  "voiceover_full": "Two moves matter. Taskwave cuts twenty percent. Orbitask kills free plan.",
+  "evidence_index": {
+    "chg_001": [
+      "obs_8812",
+      "obs_8840"
+    ],
+    "chg_003": [
+      "obs_8755",
+      "obs_8791"
+    ]
+  },
+  "narration_warnings": []
+}

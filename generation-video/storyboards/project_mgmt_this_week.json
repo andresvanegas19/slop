@@ -1,0 +1,31 @@
+{
+  "storyboard_id": "sb_2026-09-25T18:00Z",
+  "source_cycle_id": "cyc_2026-09-25T18:00Z",
+  "title": "Project management SaaS: This Week",
+  "total_duration_sec": 30,
+  "style": {
+    "prompt_prefix": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos.",
+    "palette": ["#0B1B3A", "#14B8A6", "#F97360", "#F8FAFC"],
+    "seed": 42,
+    "aspect_ratio": "16:9",
+    "resolution": "1920x1080"
+  },
+  "scenes": [
+    {"scene": 1, "start_sec": 0, "duration_sec": 3, "type": "title", "narration": "30 competitors. 5 moves that matter.", "on_screen_text": {"headline": "Project management SaaS: This Week", "sub": "30 competitors · 5 key moves"}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a wide constellation of 30 small glowing nodes, 5 of them brighter than the rest", "motion": "slow zoom out", "transition_out": "crossfade_0.3s", "change_ids": []},
+    {"scene": 2, "start_sec": 3, "duration_sec": 4, "type": "change", "narration": "Taskwave cut Pro pricing twenty percent.", "on_screen_text": {"headline": "Taskwave Pro: -20%", "competitor": "Taskwave", "rank": 1}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a large price tag sliced cleanly in half by a glowing blade, small coins tumbling out", "motion": "slow push in", "transition_out": "crossfade_0.3s", "change_ids": ["chg_001"]},
+    {"scene": 3, "start_sec": 7, "duration_sec": 4, "type": "change", "narration": "Boardline now gives AI away free.", "on_screen_text": {"headline": "Boardline launches free AI tier", "competitor": "Boardline", "rank": 2}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a staircase of glowing product tiers with a brand-new step appearing, spotlight on it", "motion": "slow push in", "transition_out": "crossfade_0.3s", "change_ids": ["chg_002"]},
+    {"scene": 4, "start_sec": 11, "duration_sec": 4, "type": "change", "narration": "Orbitask kills its free plan November first.", "on_screen_text": {"headline": "Orbitask kills its free plan Nov 1", "competitor": "Orbitask", "rank": 3}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a bright doorway closing, small figures holding laptops left standing outside", "motion": "slow push in", "transition_out": "crossfade_0.3s", "change_ids": ["chg_003"]},
+    {"scene": 5, "start_sec": 15, "duration_sec": 4, "type": "change", "narration": "Sprintly is hiring enterprise sellers across Europe.", "on_screen_text": {"headline": "Sprintly: 7 enterprise sales roles in EU", "competitor": "Sprintly", "rank": 4}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a stylized map of Europe with glowing pins on three cities, tiny figures walking toward them", "motion": "slow push in", "transition_out": "crossfade_0.3s", "change_ids": ["chg_004"]},
+    {"scene": 6, "start_sec": 19, "duration_sec": 4, "type": "change", "narration": "Planhive shipped Gantt charts, our strongest feature.", "on_screen_text": {"headline": "Planhive ships Gantt + dependencies", "competitor": "Planhive", "rank": 5}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a small rocket launching out of a laptop screen that shows abstract timeline bars", "motion": "slow push in", "transition_out": "crossfade_0.3s", "change_ids": ["chg_005"]},
+    {"scene": 7, "start_sec": 23, "duration_sec": 3, "type": "quiet", "narration": "17 others: no real change.", "on_screen_text": {"headline": "17 competitors: no real change", "sub": "198 noisy scrapes discarded"}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a calm sea of dim nodes, gentle ripples fading out", "motion": "static", "transition_out": "crossfade_0.3s", "change_ids": []},
+    {"scene": 8, "start_sec": 26, "duration_sec": 4, "type": "outro", "narration": "Biggest opening: Orbitask kills its free plan November first.", "on_screen_text": {"headline": "Biggest opening", "sub": "Orbitask kills its free plan Nov 1"}, "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a bright open path leading forward through a field of dim nodes", "motion": "slow push in", "transition_out": "crossfade_0.3s", "change_ids": ["chg_003"]}
+  ],
+  "voiceover_full": "30 competitors. 5 moves that matter. Taskwave cut Pro pricing twenty percent. Boardline now gives AI away free. Orbitask kills its free plan November first. Sprintly is hiring enterprise sellers across Europe. Planhive shipped Gantt charts, our strongest feature. 17 others: no real change. Biggest opening: Orbitask kills its free plan November first.",
+  "evidence_index": {
+    "chg_001": ["obs_8812", "obs_8840"], "chg_002": ["obs_8903"], "chg_003": ["obs_8755", "obs_8791"],
+    "chg_004": ["obs_8660", "obs_8661", "obs_8699"], "chg_005": ["obs_8870"], "chg_006": ["obs_8720", "obs_8722"],
+    "chg_007": ["obs_8801"], "chg_008": ["obs_8888"], "chg_009": ["obs_8611"], "chg_010": ["obs_8590", "obs_8902"],
+    "chg_011": ["obs_8844"], "chg_012": ["obs_8850"], "chg_013": ["obs_8633"]
+  },
+  "narration_warnings": []
+}

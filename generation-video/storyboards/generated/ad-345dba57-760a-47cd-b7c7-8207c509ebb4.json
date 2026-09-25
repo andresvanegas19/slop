@@ -1,0 +1,73 @@
+{
+  "storyboard_id": "ad_2026-09-25T21-01-17-226Z",
+  "preset": "ad",
+  "title": "Ad: Brewly, a smart coffee maker that…",
+  "prompt": "An ad for Brewly, a smart coffee maker that brews barista-quality coffee in 60 seconds",
+  "total_duration_sec": 10,
+  "style": {
+    "prompt_prefix": "Bold, clean commercial product photography, studio lighting, vibrant but controlled palette, shallow depth of field, NO text, NO letters, NO logos.",
+    "seed": 42,
+    "aspect_ratio": "16:9",
+    "resolution": "1920x1080"
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "start_sec": 0,
+      "duration_sec": 1.8,
+      "type": "hook",
+      "narration": "No time for perfect.",
+      "on_screen_text": {
+        "headline": "No Time for Perfect Coffee?"
+      },
+      "image_prompt": "Bold, clean commercial product photography, studio lighting, vibrant but controlled palette, shallow depth of field, NO text, NO letters, NO logos. A tired person stares at a burnt, cold cup of coffee in a dim kitchen, surrounded by scattered grounds and a ticking alarm clock",
+      "motion": "slow zoom out",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": []
+    },
+    {
+      "scene": 2,
+      "start_sec": 1.8,
+      "duration_sec": 3,
+      "type": "product",
+      "narration": "Meet Brewly, your barista-grade coffee maker.",
+      "on_screen_text": {
+        "headline": "Meet Brewly, Your Barista-Grade Maker"
+      },
+      "image_prompt": "Bold, clean commercial product photography, studio lighting, vibrant but controlled palette, shallow depth of field, NO text, NO letters, NO logos. The sleek Brewly coffee maker on a modern countertop, steaming with rich brown liquid, clean and well-lit",
+      "motion": "slow push in",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": []
+    },
+    {
+      "scene": 3,
+      "start_sec": 4.8,
+      "duration_sec": 3,
+      "type": "benefit",
+      "narration": "Barista quality in sixty seconds.",
+      "on_screen_text": {
+        "headline": "Barista Quality in Sixty Seconds"
+      },
+      "image_prompt": "Bold, clean commercial product photography, studio lighting, vibrant but controlled palette, shallow depth of field, NO text, NO letters, NO logos. A hand pours the freshly brewed coffee into a ceramic mug, steam rising gently, bright natural light from a window",
+      "motion": "slow push in",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": []
+    },
+    {
+      "scene": 4,
+      "start_sec": 7.8,
+      "duration_sec": 2.2,
+      "type": "cta",
+      "narration": "Order Brewly today.",
+      "on_screen_text": {
+        "headline": "Order Brewly Today"
+      },
+      "image_prompt": "Bold, clean commercial product photography, studio lighting, vibrant but controlled palette, shallow depth of field, NO text, NO letters, NO logos. Close-up of the Brewly product on a minimalist surface, product centered, clean background, inviting composition",
+      "motion": "slow push in",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": []
+    }
+  ],
+  "voiceover_full": "No time for perfect. Meet Brewly, your barista-grade coffee maker. Barista quality in sixty seconds. Order Brewly today.",
+  "narration_warnings": []
+}

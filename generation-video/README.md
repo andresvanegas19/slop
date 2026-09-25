@@ -6,7 +6,7 @@ Local production UI for planning a long-form AI video as a coherent series of sh
 
 ```bash
 npm install
-cp .env.example .env.local
+cp ../.env.example ../.env
 npm run dev
 ```
 
@@ -30,9 +30,28 @@ This prevents an unstructured, multi-beat prompt from becoming a sequence of dis
 
 - Node.js 20+
 - FFmpeg on the system `PATH`
-- A BFL API key in `BFL_API_KEY`, stored only in `.env.local`
+- A BFL API key in `BFL_API_KEY`, stored only in the repository-root `.env`
 
-Never commit `.env.local` or include API keys in shot prompts, logs, or exported manifests.
+Never commit `.env` or include API keys in shot prompts, logs, or exported manifests.
+
+## RawTree storyboard data source
+
+RawTree is an optional server-only, read-only source for grounding storyboard work.
+Set `RAWTREE_API_KEY` in the repository-root `.env`; optionally set `RAWTREE_TABLE`
+to restrict the integration to a single simple table identifier. Do not put either
+value in browser environment variables or commit a real key.
+
+- `GET /api/rawtree/status` returns only connection state and a safe error code.
+- `GET /api/rawtree/metadata?table=<name>` lists approved tables and gets the
+  selected table's selectable columns.
+- `POST /api/rawtree/query` accepts only `{ table?, columns?, limit? }` and returns
+  at most 100 rows for storyboard consumers. It rejects `sql` and never accepts
+  arbitrary SQL; the server creates a `SELECT ... LIMIT ...` query solely from
+  tables and columns confirmed by RawTree metadata.
+
+Without `RAWTREE_API_KEY`, the status endpoint returns `connected: false` with
+`not_configured`, and metadata/query endpoints return a configuration error. No
+live RawTree connection is attempted or claimed in that state.
 
 ## Generated files
 
@@ -43,6 +62,24 @@ All generated artifacts are kept under `output/`:
 - `output/videos/` is reserved for rendered MP4 exports.
 
 Generated content is ignored by Git; the directory layout is retained with `.gitignore` placeholders.
+
+## Storyboard contract
+
+`src/lib/storyboard.ts` defines the dependency-free, strongly typed JSON contract for
+storyboards. Use `validateStoryboard(unknownValue)` before consuming external input;
+it returns either typed `Storyboard` data or safe path/code/message validation issues
+without reflecting submitted values. The tracked `storyboards/mock_changes.json`
+fixture is a project-management SaaS update example covering styles, timed scenes,
+motion, transitions, on-screen text, narration warnings, and evidence IDs.
+
+## Storyboard rendering
+
+`POST /api/render-storyboard` accepts a JSON storyboard that passes the contract
+validator and renders it server-side. It generates one BFL image for each scene,
+applies motion and text overlays with FFmpeg, synthesizes local narration with macOS
+`say` when available, and writes the input, a safe run manifest, and all artifacts
+under `output/`. The endpoint returns a local MP4 URL and non-sensitive run metadata.
+It returns `422` without rendering when narration warnings need review.
 
 ## Fine-tuning LoRA (planned mock workflow)
 

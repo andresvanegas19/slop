@@ -15,3 +15,9 @@ export function logInfo(event: string, details?: Record<string, LogValue>) {
 export function logError(event: string, details?: Record<string, LogValue>) {
   write("ERROR", event, details);
 }
+
+// Prints the one-line event plus the full error object (stack trace and `cause` chain) to the server terminal.
+export function logException(event: string, error: unknown, details?: Record<string, LogValue>) {
+  write("ERROR", event, details);
+  console.error(error);
+}

@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { BflError, generateBflImage } from "@/lib/bfl";
-import { logError, logInfo } from "@/lib/runtime-log";
+import { BflError, describeError, generateBflImage } from "@/lib/bfl";
+import { logError, logInfo, logException } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
 
@@ -20,8 +20,12 @@ export async function POST(request: Request) {
 
     logInfo("image_generation_started", { shotId: body.shotId, promptLength: body.prompt.trim().length });
     const sampleUrl = await generateBflImage(body.prompt.trim());
-    const sampleResponse = await fetch(sampleUrl);
-    if (!sampleResponse.ok) throw new BflError("BFL result download failed.", sampleResponse.status);
+    const sampleResponse = await fetch(sampleUrl).catch((error: unknown) => {
+      throw new BflError(describeError(error, "BFL finished the image, but downloading it failed"));
+    });
+    if (!sampleResponse.ok) {
+      throw new BflError(`BFL finished the image, but downloading it failed (HTTP ${sampleResponse.status}). The result URL may have expired; try again.`);
+    }
     const bytes = new Uint8Array(await sampleResponse.arrayBuffer());
     const outputDir = path.join(process.cwd(), "output", "frames");
     const filename = `${body.shotId}-${Date.now()}.png`;
@@ -31,9 +35,9 @@ export async function POST(request: Request) {
     logInfo("image_generation_completed", { shotId: body.shotId, byteSize: bytes.byteLength });
     return NextResponse.json({ assetUrl: `/api/assets/${filename}` });
   } catch (error) {
-    const message = error instanceof BflError ? error.message : "Unable to generate the image.";
+    const message = describeError(error, "Unable to generate the image.");
     const status = error instanceof BflError && error.status && error.status >= 400 && error.status < 500 ? error.status : 502;
-    logError("image_generation_failed", { status, reason: error instanceof BflError ? error.message : "unexpected_error" });
+    logException("image_generation_failed", error, { status, reason: message });
     return NextResponse.json({ error: message }, { status });
   }
 }

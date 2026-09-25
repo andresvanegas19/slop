@@ -1,0 +1,171 @@
+{
+  "storyboard_id": "sb_slop_202609251948",
+  "source_cycle_id": "run_20260925T194801Z",
+  "source_table": "slop_human",
+  "title": "Pricing watch: 3 competitors",
+  "total_duration_sec": 5,
+  "style": {
+    "prompt_prefix": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos.",
+    "palette": [
+      "#0B1B3A",
+      "#14B8A6",
+      "#F97360",
+      "#F8FAFC"
+    ],
+    "seed": 42,
+    "aspect_ratio": "16:9",
+    "resolution": "1920x1080"
+  },
+  "scenes": [
+    {
+      "scene": 1,
+      "start_sec": 0,
+      "duration_sec": 1,
+      "type": "title",
+      "narration": "Pricing watch.",
+      "on_screen_text": {
+        "headline": "Pricing watch: 3 competitors",
+        "sub": "1 pricing change · 6 scrapes"
+      },
+      "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a wide constellation of 3 glowing nodes on a dark grid, 1 of them pulsing coral",
+      "motion": "slow zoom out",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": []
+    },
+    {
+      "scene": 2,
+      "start_sec": 1,
+      "duration_sec": 2,
+      "type": "change",
+      "narration": "Notion changed its pricing page.",
+      "on_screen_text": {
+        "headline": "Notion Business: $20/mo",
+        "sub": "Free · Plus $10/mo · Business $20/mo · Enterprise Custom pricing",
+        "competitor": "Notion",
+        "rank": 1
+      },
+      "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a pricing card flipping over mid-air, a coral spark of change glowing at its edge",
+      "motion": "slow push in",
+      "transition_out": "crossfade_0.3s",
+      "change_ids": [
+        "chg_001"
+      ]
+    },
+    {
+      "scene": 3,
+      "start_sec": 3,
+      "duration_sec": 2,
+      "type": "snapshot",
+      "narration": "Linear Business: sixteen dollars.",
+      "on_screen_text": {
+        "headline": "Linear Business: $16/mo",
+        "sub": "Free · Basic $10/mo · Business $16/mo · Enterprise Custom pricing",
+        "competitor": "Linear",
+        "rank": 2
+      },
+      "image_prompt": "Flat isometric editorial illustration, clean vector shapes, deep navy background, teal and coral accents, soft studio lighting, generous negative space, NO text, NO letters, NO numbers, NO logos. a staircase of glowing product tiers, the top step lit by a teal spotlight",
+      "motion": "slow push in",
+      "transition_out": "cut",
+      "change_ids": [
+        "chg_002"
+      ]
+    }
+  ],
+  "voiceover_full": "Pricing watch. Notion changed its pricing page. Linear Business: sixteen dollars.",
+  "evidence_index": {
+    "chg_001": [
+      "a80914ea636474e5eb9f9d60",
+      "bca0eb8756ae380b8538631f"
+    ],
+    "chg_002": [
+      "f42778f44d076ba7958d6df7"
+    ]
+  },
+  "narration_warnings": [],
+  "entities": [
+    {
+      "entityId": "notion",
+      "entityName": "Notion",
+      "observations": 2,
+      "latestObsId": "bca0eb8756ae380b8538631f",
+      "latestFetchedAt": "2026-09-25 19:48:08.723739000",
+      "status": "ok",
+      "url": "https://www.notion.com/pricing",
+      "pricingChanged": true,
+      "plans": [
+        {
+          "name": "Free",
+          "price": 0,
+          "label": "Free"
+        },
+        {
+          "name": "Plus",
+          "price": 10,
+          "label": "$10/mo"
+        },
+        {
+          "name": "Business",
+          "price": 20,
+          "label": "$20/mo"
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "label": "Custom pricing"
+        },
+        {
+          "name": "Plans and features",
+          "price": 0,
+          "label": "Free"
+        }
+      ],
+      "plansSource": "markdown"
+    },
+    {
+      "entityId": "linear",
+      "entityName": "Linear",
+      "observations": 2,
+      "latestObsId": "f42778f44d076ba7958d6df7",
+      "latestFetchedAt": "2026-09-25 19:48:15.590349000",
+      "status": "ok",
+      "url": "https://linear.app/pricing",
+      "pricingChanged": false,
+      "plans": [
+        {
+          "name": "Free",
+          "price": 0,
+          "label": "Free"
+        },
+        {
+          "name": "Basic",
+          "price": 10,
+          "label": "$10/mo"
+        },
+        {
+          "name": "Business",
+          "price": 16,
+          "label": "$16/mo"
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "label": "Custom pricing"
+        }
+      ],
+      "plansSource": "markdown"
+    },
+    {
+      "entityId": "jira",
+      "entityName": "Jira",
+      "observations": 2,
+      "latestObsId": "dd51a2bce233f79991cf1a86",
+      "latestFetchedAt": "2026-09-25 19:48:28.645538000",
+      "status": "partial",
+      "url": "https://www.atlassian.com/software/jira/pricing",
+      "pricingChanged": false,
+      "plans": [],
+      "plansSource": "none"
+    }
+  ],
+  "included_test_rows": true
+}
