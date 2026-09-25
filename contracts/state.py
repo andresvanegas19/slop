@@ -62,6 +62,7 @@ class PatchOp(BaseModel):
     attribute: str
     before: Any = None
     after: Any = None
+    unit: Optional[str] = None          # carried onto the Belief by add/replace
     confidence: float = Field(ge=0, le=1)
     significance: float = Field(ge=0, le=1)
     evidence_ids: list[str] = []

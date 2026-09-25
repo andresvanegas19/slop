@@ -30,16 +30,20 @@ Contracts use `obs_id`, `url` and `fetched_at` (already in RawTree and shared wi
 
 ### D5 · Every RawTree table starts with `slop_human` · Accepted
 
-The RawTree database is shared by all hackathon teams (30+ foreign tables). The PRD's six tables become `slop_human` (observations) and `slop_human_{patch,run,model_call,media,evaluation}_events`; see `contracts/common.py`. Never write to a table without the prefix. RawTree has no documented delete, so test rows are permanent: tag them with a `run_id` and filter them out.
+The RawTree database is shared by all hackathon teams (30+ foreign tables). The PRD's six tables become `slop_human` (observations) and `slop_human_{patch,run,model_call,media,evaluation}_events`; see `contracts/common.py`. Never write to a table without the prefix. Creating and deleting tables needs an admin key; ours isn't one, so our rows are effectively permanent (and other teams can't delete our tables either). Tag test rows (`run_id` starting `test_`, or `is_test`) and filter them out.
 
 ### D6 · B produces the storyboard; C renders it · Proposed
 
-**PRD 26** puts the storyboard composer under Output. Proposal: B owns it, because only B has the beliefs and evidence needed to fill `Claim`s, and the `Storyboard` validator requires them. C receives a finished `storyboard.json` and owns everything visual.
+**PRD 26** puts the storyboard composer under Output. Proposal: B owns it, because only B has the beliefs and evidence needed to fill `Claim`s, and the `Storyboard` validator requires them. C receives a finished storyboard through `slop_human_build` (D8) and owns everything visual.
 
 ### D7 · B owns evaluation · Proposed
 
 **PRD 26's** "Data and evaluation" workstream has no owner in the A/B/C split, yet it produces the main demo chart (stateful vs full-history). B already records `RunRecord`s, so B runs the baseline over the same observations.
 
-### D8 · Liquid runs through OpenRouter · Accepted
+### D8 · B hands storyboards to C through RawTree `slop_human_build` · Proposed
+
+Each teammate runs on their own machine, so a local `storyboard.json` can't reach C. B inserts `StoryboardRecord` rows (the storyboard as one JSON string). C polls for rows without a `done` `MediaJob` and records progress in `slop_human_media_events`. There are no updates, only new rows. See ARCHITECTURE.md.
+
+### D9 · Liquid runs through OpenRouter · Accepted
 
 The model is `liquid/lfm-2.5-2.6b:free` via OpenRouter; see SPIKE_FINDINGS for the required settings. It sits behind one adapter function, so switching to a sponsor endpoint changes one file.

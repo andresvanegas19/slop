@@ -9,4 +9,5 @@ TABLES = {
     "model_call": TABLE_PREFIX + "_model_call_events",
     "media": TABLE_PREFIX + "_media_events",
     "evaluation": TABLE_PREFIX + "_evaluation_events",
+    "storyboard": TABLE_PREFIX + "_build",         # B -> C handoff: StoryboardRecord rows
 }
