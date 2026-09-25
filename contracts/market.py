@@ -123,3 +123,46 @@ class MarketDevelopment(BaseModel):
     @staticmethod
     def make_id(entity_id: str, headline: str) -> str:
         return "dev_" + stable_id(entity_id, " ".join(headline.lower().split()), size=16)
+
+
+class MarketStatus(str, Enum):
+    starting = "starting"             # understanding the prompt, resolving the company's domain
+    discovering = "discovering"       # Nimble Search: finding competitors
+    collecting = "collecting"         # Nimble Search + Extract: recent content per competitor
+    analyzing = "analyzing"           # B: grounded developments from the evidence
+    storyboarding = "storyboarding"   # B: composing and storing the VideoStoryboard
+    ready = "ready"                   # storyboard_id is set; C can render it
+    error = "error"
+
+
+class MarketEvent(BaseModel):
+    at: datetime
+    stage: MarketStatus
+    message: str = Field(max_length=300)
+
+
+class MarketSessionView(BaseModel):
+    """The agent's HTTP contract for one market-update session (agent worker, loopback only):
+
+      POST /market {"prompt": str}            -> 201 {"session_id": str, "status": MarketStatus}
+      GET  /market/{session_id}               -> MarketSessionView
+      GET  /market/storyboards/{storyboard_id} -> VideoStoryboardRecord (the agent's local copy)
+
+    The web app proxies these as /api/market and /api/market/{id}, then renders `storyboard_id` via
+    /api/market-video, which loads the VideoStoryboardRecord from RawTree `slop_human_video_storyboards`
+    (falling back to the agent's local copy when publishing is off).
+    """
+    session_id: str
+    status: MarketStatus
+    message: str = ""
+    company: Optional[CompanyBrief] = None
+    competitors: list[CompetitorCandidate] = []
+    pages_fetched: int = 0
+    developments: list[MarketDevelopment] = []        # most significant first
+    storyboard_id: Optional[str] = None
+    watch_id: Optional[str] = None
+    published: bool = False                           # storyboard row delivered to RawTree
+    error: Optional[str] = None
+    events: list[MarketEvent] = []
+    started_at: datetime
+    updated_at: datetime
