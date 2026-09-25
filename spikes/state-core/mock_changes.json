@@ -1,0 +1,285 @@
+{
+  "_note": "MOCK DATA. All competitor names and facts are fictional. Shape = what the state layer emits after one cycle.",
+  "cycle_id": "cyc_2026-09-25T18:00Z",
+  "market": "Project management SaaS",
+  "window": {
+    "from": "2026-09-18T18:00Z",
+    "to": "2026-09-25T18:00Z"
+  },
+  "stats": {
+    "competitors_tracked": 30,
+    "observations_ingested": 214,
+    "observations_discarded_as_noise": 198,
+    "state_tokens": 5870
+  },
+  "changes": [
+    {
+      "change_id": "chg_001",
+      "competitor": "Taskwave",
+      "category": "price_cut",
+      "field": "pricing.pro.monthly_per_member",
+      "old_value": 12.0,
+      "new_value": 9.6,
+      "headline": "Taskwave Pro: -20%",
+      "summary": "Taskwave cut its Pro plan from $12 to $9.60 per member, a twenty percent drop.",
+      "spoken": "Taskwave cut Pro pricing twenty percent.",
+      "evidence": [
+        "obs_8812",
+        "obs_8840"
+      ],
+      "confidence": 0.95,
+      "importance": 0.92,
+      "opportunity": false,
+      "detected_at": "2026-09-24T09:14Z"
+    },
+    {
+      "change_id": "chg_002",
+      "competitor": "Boardline",
+      "category": "new_plan",
+      "field": "pricing.plans",
+      "old_value": [
+        "Free",
+        "Team",
+        "Business"
+      ],
+      "new_value": [
+        "Free",
+        "AI Free",
+        "Team",
+        "Business"
+      ],
+      "headline": "Boardline launches free AI tier",
+      "summary": "Boardline launched a free AI tier, putting AI features in front of every free user.",
+      "spoken": "Boardline now gives AI away free.",
+      "evidence": [
+        "obs_8903"
+      ],
+      "confidence": 0.9,
+      "importance": 0.88,
+      "opportunity": false,
+      "detected_at": "2026-09-23T15:02Z"
+    },
+    {
+      "change_id": "chg_003",
+      "competitor": "Orbitask",
+      "category": "deprecation",
+      "field": "pricing.free_plan.status",
+      "old_value": "active",
+      "new_value": "sunset_2026-11-01",
+      "headline": "Orbitask kills its free plan Nov 1",
+      "summary": "Orbitask is shutting down its free plan on November first. Those users need a new home.",
+      "spoken": "Orbitask kills its free plan November first.",
+      "evidence": [
+        "obs_8755",
+        "obs_8791"
+      ],
+      "confidence": 0.93,
+      "importance": 0.86,
+      "opportunity": true,
+      "detected_at": "2026-09-22T11:40Z"
+    },
+    {
+      "change_id": "chg_004",
+      "competitor": "Sprintly",
+      "category": "hiring_signal",
+      "field": "jobs.enterprise_ae.eu",
+      "old_value": 0,
+      "new_value": 7,
+      "headline": "Sprintly: 7 enterprise sales roles in EU",
+      "summary": "Sprintly posted seven enterprise sales roles in Berlin, Paris and Amsterdam. Expect an EU push.",
+      "spoken": "Sprintly is hiring enterprise sellers across Europe.",
+      "evidence": [
+        "obs_8660",
+        "obs_8661",
+        "obs_8699"
+      ],
+      "confidence": 0.88,
+      "importance": 0.81,
+      "opportunity": false,
+      "detected_at": "2026-09-21T08:05Z"
+    },
+    {
+      "change_id": "chg_005",
+      "competitor": "Planhive",
+      "category": "feature_launch",
+      "field": "features.gantt_dependencies",
+      "old_value": false,
+      "new_value": true,
+      "headline": "Planhive ships Gantt + dependencies",
+      "summary": "Planhive shipped Gantt charts with dependencies, closing the gap on our strongest feature.",
+      "spoken": "Planhive shipped Gantt charts, our strongest feature.",
+      "evidence": [
+        "obs_8870"
+      ],
+      "confidence": 0.9,
+      "importance": 0.79,
+      "opportunity": false,
+      "detected_at": "2026-09-24T17:30Z"
+    },
+    {
+      "change_id": "chg_006",
+      "competitor": "Flowdeck",
+      "category": "review_sentiment",
+      "field": "reviews.g2.rating_30d",
+      "old_value": 4.6,
+      "new_value": 4.2,
+      "headline": "Flowdeck G2 rating 4.6 \u2192 4.2",
+      "summary": "Flowdeck's G2 rating slid from 4.6 to 4.2, with complaints about speed.",
+      "spoken": "Flowdeck's reviews are slipping on speed.",
+      "evidence": [
+        "obs_8720",
+        "obs_8722"
+      ],
+      "confidence": 0.8,
+      "importance": 0.74,
+      "opportunity": true,
+      "detected_at": "2026-09-23T10:00Z"
+    },
+    {
+      "change_id": "chg_007",
+      "competitor": "Ticketeer",
+      "category": "pricing_model",
+      "field": "pricing.model",
+      "old_value": "per_seat",
+      "new_value": "usage_based",
+      "headline": "Ticketeer moves to usage pricing",
+      "summary": "Ticketeer dropped per-seat pricing for usage-based billing.",
+      "spoken": "Ticketeer switched to usage-based pricing.",
+      "evidence": [
+        "obs_8801"
+      ],
+      "confidence": 0.85,
+      "importance": 0.7,
+      "opportunity": false,
+      "detected_at": "2026-09-22T19:21Z"
+    },
+    {
+      "change_id": "chg_008",
+      "competitor": "Milestack",
+      "category": "price_increase",
+      "field": "pricing.business.monthly_per_member",
+      "old_value": 24.0,
+      "new_value": 27.0,
+      "headline": "Milestack Business: +12.5%",
+      "summary": "Milestack raised its Business plan from $24 to $27 per member.",
+      "spoken": "Milestack raised Business pricing twelve percent.",
+      "evidence": [
+        "obs_8888"
+      ],
+      "confidence": 0.92,
+      "importance": 0.66,
+      "opportunity": true,
+      "detected_at": "2026-09-24T12:12Z"
+    },
+    {
+      "change_id": "chg_009",
+      "competitor": "Kanbo",
+      "category": "exec_hire",
+      "field": "people.cro",
+      "old_value": null,
+      "new_value": "new CRO hired",
+      "headline": "Kanbo hires a CRO",
+      "summary": "Kanbo hired its first Chief Revenue Officer.",
+      "spoken": "Kanbo hired its first revenue chief.",
+      "evidence": [
+        "obs_8611"
+      ],
+      "confidence": 0.75,
+      "importance": 0.62,
+      "opportunity": false,
+      "detected_at": "2026-09-19T14:48Z"
+    },
+    {
+      "change_id": "chg_010",
+      "competitor": "Workloom",
+      "category": "retraction",
+      "field": "pricing.enterprise.monthly_per_member",
+      "old_value": 30.0,
+      "new_value": null,
+      "headline": "Retracted: Workloom $30 enterprise price",
+      "summary": "We retracted an earlier Workloom price. It came from a cached page and fresh scrapes don't support it.",
+      "spoken": "We retracted a stale Workloom price.",
+      "evidence": [
+        "obs_8590",
+        "obs_8902"
+      ],
+      "confidence": 0.9,
+      "importance": 0.5,
+      "opportunity": false,
+      "detected_at": "2026-09-23T16:33Z"
+    },
+    {
+      "change_id": "chg_011",
+      "competitor": "Roadmapr",
+      "category": "integration",
+      "field": "integrations.slack",
+      "old_value": false,
+      "new_value": true,
+      "headline": "Roadmapr adds Slack",
+      "summary": "Roadmapr added a Slack integration.",
+      "spoken": "Roadmapr added Slack.",
+      "evidence": [
+        "obs_8844"
+      ],
+      "confidence": 0.9,
+      "importance": 0.41,
+      "opportunity": false,
+      "detected_at": "2026-09-24T07:55Z"
+    },
+    {
+      "change_id": "chg_012",
+      "competitor": "Stackboard",
+      "category": "minor",
+      "field": "features.dark_mode",
+      "old_value": false,
+      "new_value": true,
+      "headline": "Stackboard adds dark mode",
+      "summary": "Stackboard shipped dark mode.",
+      "spoken": "Stackboard shipped dark mode.",
+      "evidence": [
+        "obs_8850"
+      ],
+      "confidence": 0.95,
+      "importance": 0.22,
+      "opportunity": false,
+      "detected_at": "2026-09-24T21:10Z"
+    },
+    {
+      "change_id": "chg_013",
+      "competitor": "Cadencia",
+      "category": "hiring_signal",
+      "field": "jobs.support",
+      "old_value": 4,
+      "new_value": 6,
+      "headline": "Cadencia: +2 support roles",
+      "summary": "Cadencia posted two support roles.",
+      "spoken": "Cadencia is hiring support.",
+      "evidence": [
+        "obs_8633"
+      ],
+      "confidence": 0.85,
+      "importance": 0.18,
+      "opportunity": false,
+      "detected_at": "2026-09-20T13:00Z"
+    }
+  ],
+  "unchanged": [
+    "Tallyboard",
+    "Brightlane",
+    "Pathgrid",
+    "Taskforge",
+    "Relaydesk",
+    "Northlist",
+    "Quillboard",
+    "Tempo Tracks",
+    "Loopline",
+    "Gridnote",
+    "Pivotal Path",
+    "Bellwork",
+    "Checkpoint HQ",
+    "Sprout Plan",
+    "Lumen Board",
+    "Harborlist",
+    "Keystone Tasks"
+  ]
+}
