@@ -1,0 +1,27 @@
+watch:
+  watch_id: competitive-intel
+  objective: Track competitor pricing and keep an up-to-date view of what is true.
+  entities: [notion, linear, jira]
+  topics: [pricing]
+  max_pages_per_run: 20
+  max_searches_per_run: 5
+
+sources:
+  - source_id: notion-pricing
+    entity_id: notion
+    entity_name: Notion
+    source_type: pricing
+    parser_version: nimble-md-cards-v1   # pricing hash = normalized plan cards (acquisition/normalize.py)
+    seed_url: https://www.notion.com/pricing
+  - source_id: linear-pricing
+    entity_id: linear
+    entity_name: Linear
+    source_type: pricing
+    parser_version: nimble-md-cards-v1   # pricing hash = normalized plan cards (acquisition/normalize.py)
+    seed_url: https://linear.app/pricing
+  - source_id: jira-pricing
+    entity_id: jira
+    entity_name: Jira
+    source_type: pricing
+    parser_version: nimble-md-cards-v1   # pricing hash = normalized plan cards (acquisition/normalize.py)
+    seed_url: https://www.atlassian.com/software/jira/pricing
