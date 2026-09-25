@@ -1,0 +1,5 @@
+[
+  {"entity_id": "notion", "entity_name": "Notion", "source_type": "pricing", "url": "https://www.notion.com/pricing"},
+  {"entity_id": "linear", "entity_name": "Linear", "source_type": "pricing", "url": "https://linear.app/pricing"},
+  {"entity_id": "jira", "entity_name": "Jira", "source_type": "pricing", "url": "https://www.atlassian.com/software/jira/pricing"}
+]
