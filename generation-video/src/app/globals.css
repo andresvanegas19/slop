@@ -238,3 +238,17 @@ video.stage-media { background: #000; }
   .chat-bubble { max-width: 92%; }
   .chat-result img { width: 104px; }
 }
+.timeline-row { display: flex; flex: 0 0 auto; align-items: stretch; gap: 6px; margin-top: 10px; }
+.timeline-row .timeline { flex: 1; min-width: 0; margin-top: 0; }
+.timeline-ghost { flex: 0 0 auto; width: 78px; border: 2px dashed #3d4f7a; border-radius: 10px; color: #8ea2d4; background: #0d1220; font-size: 11px; line-height: 1.2; }
+.timeline-ghost:hover { border-color: var(--accent); color: #fff; }
+.timeline-ghost.active { border-color: var(--accent); color: #fff; background: #4f6fe033; box-shadow: 0 0 0 2px #4f6fe044; }
+.action-pill { align-self: flex-start; padding: 3px 9px; border: 1px solid #2d4a86; border-radius: 999px; color: #dbe5ff; background: #121b2e; font-size: 11px; font-weight: 600; }
+.action-pill em { margin-left: 4px; color: #7f8fb5; font-size: 10px; font-style: normal; font-weight: 400; }
+.grab-card > div.grab-card-actions { display: flex; flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .grab-card > div.grab-card-actions { width: 100%; flex: 1 1 100%; }
+  .history-pick-label { display: none; }
+  .prompt-form.continue { gap: 6px; }
+  .continue-bar { margin-left: 0; }
+}

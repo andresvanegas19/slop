@@ -127,6 +127,11 @@ function requireClip(project: Project, action: string) {
   if (missing) throw new TimelineError(`Frame ${missing.index} of project "${project.id}" has no video segment.`, 422);
 }
 
+/** Keeps only the first `lengthSec` of a segment (picture + audio, frame-accurate); returns the new filename in output/videos. */
+export function trimSegmentTo(segmentPath: string, lengthSec: number) {
+  return keepPieces(segmentPath, [{ start: 0, end: lengthSec }]);
+}
+
 /** Removes project-time [startSec, endSec) (may span segments); returns the reassembled project. */
 export async function cutRange(project: Project, startSec: number, endSec: number): Promise<Project> {
   requireClip(project, "Cutting");

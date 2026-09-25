@@ -222,11 +222,12 @@ async function applyMomentEdit(project: Project, index: number, prompt: string, 
     ? [
         { atSec: 0, imagePath: frameFilePath(frameImageUrl(startFrame)) },
         { atSec: Math.min(0.8 * length, Math.max(0.2 * length, momentLocal - localStart)), imagePath: editedPath },
-        { atSec: length, imagePath: frameFilePath(frameImageUrl(endFrame)) },
+        // The last frame kept from the generated clip is at L − 1/30; pin the original end frame exactly there.
+        { atSec: Math.max(0, length - 1 / 30), imagePath: frameFilePath(frameImageUrl(endFrame)) },
       ]
     : [
         { atSec: 0, imagePath: editedPath },
-        { atSec: length, imagePath: frameFilePath(frameImageUrl(endFrame)) },
+        { atSec: Math.max(0, length - 1 / 30), imagePath: frameFilePath(frameImageUrl(endFrame)) },
       ];
   const clip = await renderPinnedClip({ prompt, pins, lengthSec: length });
   logInfo("moment_edit_clip_rendered", { projectId: project.id, index, timestamps: clip.timestampFormat, pins: pins.length, lengthSec: Math.round(length * 1000) / 1000 });

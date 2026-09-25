@@ -41,12 +41,19 @@ export type ChatMessage = {
   edited?: boolean;
   /** Video time the user grabbed the frame at (user messages). */
   atSec?: number;
+  /** Project-time window actually edited/selected for this turn (range or ±windowSec), on user and assistant entries. */
+  rangeStartSec?: number;
+  rangeEndSec?: number;
   /** Frame grabbed from the video at `atSec`, used as the reference image for this turn. */
   grabbedFrameUrl?: string;
   /** Enhanced image prompt used for the edit (assistant messages). */
   enhancedPrompt?: string;
   /** Titles of the RAG guidance documents used for this turn (assistant messages). */
   ragSources?: string[];
+  /** /command turns: the action that was run (assistant messages). */
+  action?: string;
+  /** /command turns: one-line description of what happened (assistant messages). */
+  summary?: string;
 };
 
 export type Project = {

@@ -143,6 +143,12 @@ export async function enhanceImagePrompt(input: {
     if (input.referenceImagePath && await modelSupportsImages(model)) {
       imageUrl = `data:image/png;base64,${(await readFile(input.referenceImagePath)).toString("base64")}`;
     }
+    if (!imageUrl && isPlaceholderPrompt(frame.prompt)) {
+      // The frame's content is unknown to a text-only model ("From: <title>" / uploads): any description it writes is
+      // invented and would replace the picture. Send only the change, anchored to the reference image.
+      logInfo("prompt_enhance_skipped_placeholder", { model });
+      return { prompt: fallbackPrompt(frame.prompt, input.instruction), source: "fallback" };
+    }
     const text = [
       `Current prompt: ${frame.prompt}`,
       frame.headline ? `(The headline "${frame.headline}" is overlaid separately; do not put it in the image.)` : undefined,

@@ -158,7 +158,9 @@ export function extractLastFrame(input: string) {
 
 /** Exact (output-seeked, frame-accurate) frame at `atSec` of a video → output/frames/<uuid>.png. */
 export function extractFrameAt(input: string, atSec: number) {
-  return extractFrame(input, ["__INPUT__", "-ss", Math.max(0, atSec).toFixed(3), "-frames:v", "1"], `extract the frame at ${atSec.toFixed(3)}s`);
+  // Output seeking returns the first frame with pts ≥ t. Seek 5 ms early so a time like 2 − 1/30 (1.9667) picks that
+  // frame and not the next one (rounding to "1.967" used to skip a frame — across a hard cut that's another scene).
+  return extractFrame(input, ["__INPUT__", "-ss", Math.max(0, atSec - 0.005).toFixed(4), "-frames:v", "1"], `extract the frame at ${atSec.toFixed(3)}s`);
 }
 
 /**
