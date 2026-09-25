@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -121,7 +122,7 @@ function flag(value: unknown) {
 }
 
 /** GET = dry run. `?includeTestRows=1` disables the test-row filter. */
-export async function GET(request: Request) {
+async function routeGET(request: Request) {
   const params = new URL(request.url).searchParams;
   return handle({ dryRun: true, includeTestRows: flag(params.get("includeTestRows")) });
 }
@@ -144,4 +145,6 @@ async function handlePost(request: Request) {
   return handle({ dryRun: flag(body.dryRun), includeTestRows: flag(body.includeTestRows) });
 }
 
-export const POST = jobable("rawtree", handlePost);
+export const POST = withRouteLog(jobable("rawtree", handlePost));
+
+export const GET = withRouteLog(routeGET);

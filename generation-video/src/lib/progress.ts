@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { logProgressEvent } from "@/lib/progress-log";
 
 export type ProgressStage = "intent" | "guidance" | "prompt" | "image" | "video" | "splice" | "render" | "save";
 
@@ -44,7 +45,10 @@ export function withProgress<T>(emit: Emit, signal: AbortSignal | undefined, tas
   const startedAt = Date.now();
   // Nested scopes (parallel sub-tasks with a private sink) keep the job's resume state.
   const memo = options.memo ?? storage.getStore()?.memo;
+  // Only the outermost sink mirrors events into the server log (nested sinks forward to it).
+  const logged = !storage.getStore();
   const safeEmit: Emit = (event) => {
+    if (logged) logProgressEvent(event, Date.now() - startedAt);
     if (signal?.aborted) return;
     try {
       emit(event.type === "stage" ? { ...event, at: Date.now() - startedAt } : event);

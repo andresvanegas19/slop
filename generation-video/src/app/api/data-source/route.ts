@@ -1,10 +1,11 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { getMockAnalyticalDataMetadata } from "@/lib/mock-analytical-data";
 import { logInfo } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
 
-export function GET() {
+function routeGET() {
   const metadata = getMockAnalyticalDataMetadata();
   logInfo("data_source_metadata_served", {
     source: metadata.source,
@@ -19,3 +20,5 @@ export function GET() {
     },
   });
 }
+
+export const GET = withRouteLog(routeGET);

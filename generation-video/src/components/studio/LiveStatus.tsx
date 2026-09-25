@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
-import { liveActionLabel, videoFraction } from "./live";
+import { liveActionLabel, stepText, videoFraction } from "./live";
 import type { LiveProgress } from "./types";
 import { collapse, fade, spring } from "./ui";
 
@@ -42,7 +42,7 @@ export default function LiveStatus({ live, fallbackLabel, onCancel }: { live: Li
   const done = live.steps.slice(0, -1);
   const seconds = currentStepSeconds(live, now);
   const fraction = current?.stage === "video" ? videoFraction(live) : null;
-  const label = current?.label ?? fallbackLabel.replace(/…$/, "");
+  const label = stepText(current?.label ?? fallbackLabel);
 
   return (
     <div className="flex min-w-[220px] flex-col gap-1.5">
@@ -86,8 +86,8 @@ export default function LiveStatus({ live, fallbackLabel, onCancel }: { live: Li
           <AnimatePresence initial={false}>
             {showSteps && (
               <motion.ol key="steps" className="overflow-hidden" {...collapse}>
-                {done.map((step) => <li key={`${step.stage}-${step.at}`} className="mt-0.5 text-[10px] text-[#8a8a8a]"><span className="text-mint">✓</span> {step.label}</li>)}
-                {current && <li className="mt-0.5 text-[10px] text-[#b8c6b9]">⟳ {current.label}</li>}
+                {done.map((step) => <li key={`${step.stage}-${step.at}`} className="mt-0.5 text-[10px] text-[#8a8a8a]"><span className="text-mint">✓</span> {stepText(step.label)}</li>)}
+                {current && <li className="mt-0.5 text-[10px] text-[#b8c6b9]">⟳ {stepText(current.label)}</li>}
               </motion.ol>
             )}
           </AnimatePresence>

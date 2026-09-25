@@ -88,6 +88,11 @@ export function setHistoryOpen(open: boolean) {
   historyOpenListeners.forEach((listener) => listener());
 }
 
+/** The current history outside React (e.g. right after mount, before useHistory has hydrated). */
+export function readHistory() {
+  return getHistorySnapshot();
+}
+
 export function useHistory() {
   return useSyncExternalStore(subscribeHistory, getHistorySnapshot, getHistoryServerSnapshot);
 }

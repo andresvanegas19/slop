@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { jsonBody, proxyJson } from "@/lib/research-agent";
 
@@ -11,7 +12,7 @@ const MAX_PROMPT_LENGTH = 32_000;
  * Liquid decides whether the first home prompt names a company (any language), so the studio knows whether to start
  * company + competitor research before generating. Only names written in the prompt are accepted.
  */
-export async function POST(request: Request) {
+async function routePOST(request: Request) {
   const body = await jsonBody(request);
   if (body instanceof NextResponse) return body;
   if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > MAX_PROMPT_LENGTH) {
@@ -24,3 +25,5 @@ export async function POST(request: Request) {
     timeoutMs: 25_000,
   });
 }
+
+export const POST = withRouteLog(routePOST);

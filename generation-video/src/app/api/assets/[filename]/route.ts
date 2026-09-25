@@ -1,10 +1,11 @@
+import { withRouteLog } from "@/lib/route-log";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ filename: string }> }) {
+async function routeGET(_request: Request, { params }: { params: Promise<{ filename: string }> }) {
   const { filename } = await params;
   if (!/^[a-zA-Z0-9_-]+\.png$/.test(filename)) return new NextResponse(null, { status: 400 });
   try {
@@ -14,3 +15,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
     return new NextResponse(null, { status: 404 });
   }
 }
+
+export const GET = withRouteLog(routeGET);

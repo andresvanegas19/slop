@@ -1,10 +1,11 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { StoryError, loadStorySet, publicStory } from "@/lib/stories";
 
 export const runtime = "nodejs";
 
 /** GET → the saved story set `{ storySetId, prompt, durationSec, stories, renders }`. */
-export async function GET(_request: Request, { params }: { params: Promise<{ setId: string }> }) {
+async function routeGET(_request: Request, { params }: { params: Promise<{ setId: string }> }) {
   const { setId } = await params;
   try {
     const set = await loadStorySet(setId);
@@ -14,3 +15,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ set
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status });
   }
 }
+
+export const GET = withRouteLog(routeGET);

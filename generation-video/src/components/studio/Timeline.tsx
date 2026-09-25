@@ -25,6 +25,9 @@ type TimelineProps = {
   isStoryboardProject: boolean;
   isEditing: boolean;
   showNextShot: boolean;
+  /** The range a running edit is changing (shimmers), or a pending appended shot (placeholder at the end). */
+  pendingWindow?: TimeWindow | null;
+  pendingAppend?: boolean;
   isAtEnd: boolean;
   onGoToEnd: () => void;
   onRemoveFrame: (frame: ProjectFrame) => void;
@@ -35,6 +38,20 @@ type TimelineProps = {
 };
 
 const percent = (seconds: number, total: number) => `${(seconds / total) * 100}%`;
+
+/** A light band sweeping across its (relative, overflow-hidden) parent. */
+function Shimmer() {
+  return (
+    <motion.i
+      className="pointer-events-none absolute inset-y-0 block w-1/2 motion-reduce:hidden"
+      style={{ background: "linear-gradient(90deg, transparent, #ffffff38, transparent)" }}
+      initial={{ left: "-50%" }}
+      animate={{ left: "100%" }}
+      transition={{ duration: 1.3, ease: "easeInOut", repeat: Infinity }}
+      aria-hidden="true"
+    />
+  );
+}
 
 /** Filmstrip with shots, past-edit ticks, the draggable range, grab marker, playhead and the "+ next shot" ghost. */
 export default function Timeline({ timelineRef, ...props }: TimelineProps) {
@@ -120,6 +137,15 @@ export default function Timeline({ timelineRef, ...props }: TimelineProps) {
             </AnimatePresence>
           </motion.span>
         )}
+        {props.pendingWindow && (
+          <span
+            className="pointer-events-none absolute inset-y-0 z-2 overflow-hidden rounded-[6px] border-2 border-accent bg-[#4f6fe02e]"
+            style={{ left: percent(props.pendingWindow.startSec, total), width: percent(props.pendingWindow.endSec - props.pendingWindow.startSec, total) }}
+            aria-hidden="true"
+          >
+            <Shimmer />
+          </span>
+        )}
         {flashWindow && (
           <motion.span
             key={`${flashWindow.startSec}-${flashWindow.endSec}`}
@@ -151,7 +177,18 @@ export default function Timeline({ timelineRef, ...props }: TimelineProps) {
           <i className="absolute -top-[5px] left-1/2 h-3 w-3 -translate-x-1/2 rounded-full bg-white" />
         </span>
       </div>
-      {props.showNextShot && (
+      {props.pendingAppend ? (
+        <motion.div
+          className="relative grid w-[78px] flex-none place-items-center overflow-hidden rounded-[10px] border-2 border-accent bg-[#4f6fe026] text-[11px] leading-[1.2] text-white"
+          initial={{ opacity: 0, scale: 0.94 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={springSoft}
+          aria-label="New shot being generated"
+        >
+          + new shot
+          <Shimmer />
+        </motion.div>
+      ) : props.showNextShot && (
         <motion.button
           type="button"
           className={cn(

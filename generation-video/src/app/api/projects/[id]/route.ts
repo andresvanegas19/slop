@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { loadProject, ProjectNotFoundError } from "@/lib/projects";
@@ -6,7 +7,7 @@ import { logException } from "@/lib/runtime-log";
 export const runtime = "nodejs";
 
 /** GET → `{ project }` */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routeGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
     return NextResponse.json({ project: await loadProject(id) });
@@ -17,3 +18,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const GET = withRouteLog(routeGET);

@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { forwardedUser, jsonBody, proxyJson } from "@/lib/research-agent";
 import { logUserPrompt } from "@/lib/user-prompts";
@@ -32,4 +33,4 @@ async function handlePost(request: Request) {
   });
 }
 
-export const POST = logUserPrompt("research", handlePost);
+export const POST = withRouteLog(logUserPrompt("research", handlePost));

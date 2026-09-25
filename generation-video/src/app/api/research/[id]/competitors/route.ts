@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { badSessionId, jsonBody, proxyJson } from "@/lib/research-agent";
 
@@ -9,13 +10,13 @@ export const dynamic = "force-dynamic";
  * verified, summary, claims, pages }], differentiators, competitor_themes, avoid_terms }`.
  * Competitor research starts by itself after the session's first round (Nimble scrapes each verified competitor).
  */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routeGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return badSessionId(id) ?? proxyJson("research_competitors", `/research/${id}/competitors`);
 }
 
 /** POST `{ force?: boolean }` → 202 `{ status, started }`: (re)starts competitor research now. */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const invalid = badSessionId(id);
   if (invalid) return invalid;
@@ -27,3 +28,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     body: JSON.stringify({ force: body.force === true }),
   });
 }
+
+export const GET = withRouteLog(routeGET);
+export const POST = withRouteLog(routePOST);

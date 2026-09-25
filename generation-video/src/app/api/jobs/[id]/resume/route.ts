@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { RESUME_HEADER, RESUME_TOKEN_HEADER } from "@/lib/job-route";
 import { getJob, isTerminal, publicJob, resumeToken } from "@/lib/jobs";
@@ -8,7 +9,7 @@ export const runtime = "nodejs";
  * POST → re-runs an interrupted (or failed/cancelled) job from its stored input under the same id. Goes through the
  * original route (so its module is loaded even right after a restart) in resume mode.
  */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const job = await getJob(id);
   if (!job) return NextResponse.json({ error: "Job not found." }, { status: 404 });
@@ -29,3 +30,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const resumed = await getJob(id);
   return NextResponse.json({ jobId: id, job: resumed ? publicJob(resumed) : null }, { status: 202 });
 }
+
+export const POST = withRouteLog(routePOST);

@@ -23,6 +23,7 @@ import yaml
 
 from contracts.research import Finding, PageVisit, ResearchSessionState, SourcedText
 from contracts.story import COMPETITOR_TOPICS, CompetitiveLandscape, Competitor
+from core.logs import event
 
 from .research_tools import MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, clean_quote, norm, quote_in_page
 from .story_llm import JsonLlm
@@ -141,6 +142,8 @@ class CompetitorResearch:
 
     # --- bookkeeping ------------------------------------------------------------------------------------------------
     def emit(self, type_, **data):
+        event(log, "competitors_" + type_, logging.INFO,
+              **{k: v for k, v in data.items() if isinstance(v, (str, int, float, bool))})
         return self.research_store.append_event(self.sid, type_, data)
 
     def save(self):

@@ -14,10 +14,17 @@ const DEV_BADGE_ROOM = process.env.NODE_ENV === "development" ? "min-[761px]:pb-
 /** The side panel's editor view: title, player, timeline, selected-range card and shortcuts line. */
 export default function Editor({ studio: s }: { studio: Studio }) {
   const project = s.project;
-  // While a streamed operation runs, the stage overlay shows the server's current step.
-  const liveSteps = s.pendingOp?.live?.steps;
-  const liveStep = liveSteps?.[liveSteps.length - 1];
-  const busy = s.busy && liveStep ? { ...s.busy, detail: `${liveStep.label}…` } : s.busy;
+  // While an edit job runs: what it changes (from the request, refined by the server's intent event).
+  const pending = s.isEditing && s.pendingOp && !s.pendingOp.error ? s.pendingOp : null;
+  const intent = pending?.live?.intent;
+  // Answers / new-video suggestions don't touch the video: no loading frame for them.
+  const passive = intent?.action === "answer" || intent?.action === "new_video";
+  const pendingAppend = Boolean(pending) && !passive && (intent ? intent.action === "append_shot" || intent.action === "append_attachment" : pending?.target?.append === true);
+  const pendingWindow = pending && !passive && !pendingAppend ? intent?.window ?? pending.target?.window ?? null : null;
+  const frameAt = (sec: number) => project?.frames[frameIndexAt(project.frames, sec)]?.imageUrl;
+  const pendingImage = !pending ? null
+    : pendingAppend ? project?.frames[project.frames.length - 1]?.imageUrl ?? null
+    : s.grab?.thumbUrl ?? (pendingWindow ? frameAt(pendingWindow.startSec) : undefined) ?? pending.user.thumbUrl ?? null;
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col pt-[22px] max-[1000px]:flex-none", DEV_BADGE_ROOM)}>
       <div>
@@ -44,8 +51,10 @@ export default function Editor({ studio: s }: { studio: Studio }) {
             grab={s.grab}
             isGrabFresh={s.isGrabFresh}
             onGrab={() => { s.pauseQuietly(); s.grabCurrentFrame({ confirm: true, focusComposer: true }); }}
-            isEditing={s.isEditing}
-            busy={busy}
+            isEditing={s.isEditing && !passive}
+            busy={s.busy}
+            pendingLive={pending?.live ?? null}
+            pendingImage={pendingImage}
             onCancelEdit={s.cancelEdit}
             editedNote={s.editedNote}
             onLoadedMetadata={s.onVideoLoadedMetadata}
@@ -75,6 +84,8 @@ export default function Editor({ studio: s }: { studio: Studio }) {
             isStoryboardProject={s.isStoryboardProject}
             isEditing={s.isEditing}
             showNextShot={s.isAutoMode && !s.isStoryboardProject}
+            pendingWindow={pendingWindow}
+            pendingAppend={pendingAppend}
             isAtEnd={s.isAtEnd}
             onGoToEnd={s.goToEnd}
             onRemoveFrame={s.requestRemoveFrame}

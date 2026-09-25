@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -6,7 +7,7 @@ import { UPLOAD_CONTENT_TYPES, UPLOAD_FILENAME, uploadsDirectory } from "@/lib/u
 export const runtime = "nodejs";
 
 // Same byte-range handling as /api/videos (Safari only plays <video> with 206 Partial Content).
-export async function GET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
+async function routeGET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
   const { filename } = await params;
   if (!UPLOAD_FILENAME.test(filename)) return new NextResponse(null, { status: 400 });
   const headers = {
@@ -38,3 +39,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     headers: { ...headers, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` },
   });
 }
+
+export const GET = withRouteLog(routeGET);

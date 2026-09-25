@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -130,4 +131,4 @@ async function handlePost(request: Request) {
   }
 }
 
-export const POST = jobable("storyboard", logUserPrompt("storyboard", handlePost));
+export const POST = withRouteLog(jobable("storyboard", logUserPrompt("storyboard", handlePost)));

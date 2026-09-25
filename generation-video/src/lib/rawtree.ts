@@ -1,6 +1,7 @@
 import { loadEnvConfig } from "@next/env";
 import { RawTree, type ColumnInfo, type QueryResponse, type TableInfo } from "@rawtree/sdk";
 import path from "node:path";
+import { instrumentRawTree } from "@/lib/rawtree-log";
 
 const MAX_COLUMNS = 12;
 const MAX_ROWS = 100;
@@ -41,7 +42,7 @@ export function getClient() {
   if (!apiKey) {
     throw new RawTreeConfigurationError("RAWTREE_API_KEY is not configured on the server.");
   }
-  return new RawTree({ apiKey });
+  return instrumentRawTree(new RawTree({ apiKey }));
 }
 
 function isIdentifier(value: string): boolean {

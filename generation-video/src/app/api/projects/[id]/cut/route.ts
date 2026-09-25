@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { actionErrorResponse, cutProjectRange } from "@/lib/project-actions";
@@ -25,4 +26,4 @@ async function handlePost(request: Request, { params }: { params: Promise<{ id: 
   }
 }
 
-export const POST = jobable("cut", logUserPrompt("cut", handlePost));
+export const POST = withRouteLog(jobable("cut", logUserPrompt("cut", handlePost)));

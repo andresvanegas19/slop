@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ClientAbortedError, withProgress, type JobMemo, type ProgressEvent } from "@/lib/progress";
-import { logException, logInfo } from "@/lib/runtime-log";
+import { currentTrace, logException, logInfo, withTrace } from "@/lib/runtime-log";
 
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 export type JobInput = {
@@ -42,6 +42,8 @@ export type JobRecord = {
   startedAt?: string;
   finishedAt?: string;
   projectId?: string;
+  /** Trace id of the request that created (or resumed) the job; all of its log lines carry it (see runtime-log.ts). */
+  traceId?: string;
   /** The user's text (prompt / message), for listing. */
   prompt?: string;
   attempt: number;
@@ -131,11 +133,22 @@ function save(live: LiveJob, immediate = false) {
 }
 
 async function readJob(id: string): Promise<JobRecord | null> {
+  let job: JobRecord;
   try {
-    return JSON.parse(await readFile(jobFile(id), "utf8")) as JobRecord;
+    job = JSON.parse(await readFile(jobFile(id), "utf8")) as JobRecord;
   } catch {
     return null;
   }
+  // Every job this process runs is in the registry (which survives HMR), so a running/queued job that is only on disk
+  // belongs to a process that died: it was interrupted.
+  if ((job.status === "running" || job.status === "queued") && !registry.jobs.has(id)) {
+    job.status = "interrupted";
+    job.error = "Interrupted by a server restart.";
+    job.updatedAt = new Date().toISOString();
+    await writeJob(job).catch(() => undefined);
+    logInfo("job_interrupted", { jobId: id, kind: job.kind });
+  }
+  return job;
 }
 
 /** First access after a (re)start: jobs left running/queued by a previous process are interrupted; old files go. */
@@ -226,7 +239,7 @@ function finish(live: LiveJob, status: JobStatus, outcome: { event: ProgressEven
   live.listeners.clear();
   registry.running.delete(job.id);
   void save(live, true);
-  logInfo("job_finished", { jobId: job.id, kind: job.kind, status, attempt: job.attempt, ms: Date.now() - Date.parse(job.startedAt ?? job.createdAt) });
+  logInfo(status === "error" ? "job_finished_error" : "job_finished", { jobId: job.id, kind: job.kind, status, attempt: job.attempt, httpStatus: outcome.httpStatus, error: outcome.error, events: job.events.length, projectId: job.projectId, ms: Date.now() - Date.parse(job.startedAt ?? job.createdAt), totalMs: Date.now() - Date.parse(job.createdAt) });
   pump();
 }
 
@@ -236,7 +249,7 @@ async function execute(live: LiveJob) {
   job.status = "running";
   job.startedAt = new Date().toISOString();
   void save(live, true);
-  logInfo("job_started", { jobId: job.id, kind: job.kind, attempt: job.attempt });
+  logInfo("job_started", { jobId: job.id, kind: job.kind, attempt: job.attempt, waitedMs: Date.parse(job.startedAt) - Date.parse(job.createdAt), prompt: job.prompt });
   const emit = (event: ProgressEvent) => {
     if (event.type === "bfl_pending") {
       record(live, event.step, event.pollingUrl);
@@ -277,7 +290,8 @@ function pump() {
     const live = registry.jobs.get(id);
     if (!live || live.job.status !== "queued") continue;
     registry.running.add(id);
-    void execute(live);
+    const { job } = live;
+    void withTrace({ traceId: job.traceId ?? job.id.replace(/-/g, "").slice(0, 12), jobId: job.id, projectId: job.projectId, userId: job.input.userId, route: `job:${job.kind}`, startedAt: Date.now() }, () => execute(live));
   }
 }
 
@@ -316,6 +330,7 @@ export async function startJob(kind: string, input: JobInput, runner: JobRunner)
     updatedAt: now,
     projectId: input.params?.id,
     prompt: promptOf(input.body),
+    traceId: currentTrace()?.traceId,
     attempt: 1,
     memo: {},
   };
@@ -343,6 +358,7 @@ export async function resumeStoredJob(id: string, runner: JobRunner): Promise<Jo
   job.error = undefined;
   job.httpStatus = undefined;
   job.finishedAt = undefined;
+  job.traceId = currentTrace()?.traceId ?? job.traceId;
   const live: LiveJob = { job, runner, controller: new AbortController(), listeners: new Set(), saveTimer: null, saving: Promise.resolve(), previousMemo };
   pushEvent(live, { type: "stage", stage: "intent", label: "Resuming after a server restart…" });
   enqueue(live);

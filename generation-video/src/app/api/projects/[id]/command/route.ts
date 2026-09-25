@@ -1,8 +1,9 @@
+import { withRouteLog } from "@/lib/route-log";
 import { respondMaybeStreaming, type ActionOutcome } from "@/lib/ndjson";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { ClientAbortedError, emitEvent, emitStage } from "@/lib/progress";
 import { frameAt } from "@/lib/frame-grab";
-import { detectIntent } from "@/lib/intent";
+import { detectIntent, newVideoPreset } from "@/lib/intent";
 import {
   ActionError,
   actionErrorResponse,
@@ -181,6 +182,12 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
         const updated = await appendChat(id, index, { text: message, rangeStartSec: range.startSec, rangeEndSec: range.endSec }, { text: summary, action: "cut_range", summary });
         return ok({ ...base, summary, project: updated, removed: result.removed });
       }
+      case "new_video": {
+        // A different video: suggest starting it from the composer; this project is not touched.
+        const preset = intent.params.preset ?? newVideoPreset(message);
+        const reply = `This sounds like a new video rather than a change to “${project.title}”. Start a new ${preset === "company" ? "company video" : preset === "ad" ? "ad" : "video"}, or keep editing this one?`;
+        return ok({ ...base, summary: "Suggested a new video", reply, suggestion: { preset, prompt: message }, project });
+      }
       case "append_attachment": {
         if (!uploadId && !sourceProjectId) throw new ActionError("Attach a video (or pick one from history) to add it to the end.", 422);
         const result = await appendToProject({ projectId: id, uploadId, sourceProjectId, prompt: uploadId ? message : undefined });
@@ -197,4 +204,4 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
   }
 }
 
-export const POST = jobable("command", logUserPrompt("command", handlePost));
+export const POST = withRouteLog(jobable("command", logUserPrompt("command", handlePost)));

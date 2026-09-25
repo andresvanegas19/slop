@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { followJob, type StoredEvent } from "@/lib/jobs";
 
@@ -12,7 +13,7 @@ const HEARTBEAT_MS = 15_000;
  * the job ends with `{"type":"done",…}` / `{"type":"error",…}` (same shapes as the streaming routes). Heartbeats
  * (`{"type":"heartbeat"}`) every 15s. An interrupted job ends with an error event carrying `interrupted: true`.
  */
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routeGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const after = Math.max(0, Number(new URL(request.url).searchParams.get("after")) || 0);
   const encoder = new TextEncoder();
@@ -83,3 +84,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     },
   });
 }
+
+export const GET = withRouteLog(routeGET);

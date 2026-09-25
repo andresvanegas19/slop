@@ -70,6 +70,18 @@ the parent environment explicitly.
   `src/lib/company-agent.ts` calls it from every generation route and never
   throws. Only the distilled `CompanyContext` brief reaches Next/BFL prompts.
   See `agent/README.md`.
+- First home prompt → research → storyline → ad: `useStudio.generateMedia()`
+  asks `POST /api/research/detect` (Liquid, rules fallback) whether the first
+  home prompt names a company; if so it starts a research session. After the
+  profile, `agent/story_api.py` researches competitors (`agent/competitors.py`,
+  pages via `agent/nimble_fetch.py` when `NIMBLE_API_KEY` is set). "Create
+  video now" asks `agent/storyline.py` for a `StoryPlan` with one beat per role
+  of a preset (`ad`, `company`, `competitive`; `presetTemplates()` in
+  `src/lib/presets.ts`). The user edits/approves it in `StorylineMessages.tsx`,
+  and `generate-preset` renders it with `researchSessionId` + `storyline`.
+  Competitors only inform differentiation: never put their names (`avoid_terms`)
+  in storylines, prompts or scenes; `src/lib/storyline.ts` and the agent both
+  enforce it.
 - Content strategy (audience-first hooks in the first 0.6–2 s, a value shift per
   scene, the 5-7-10 angle/format matrix, the growth/connection/sale funnel) lives
   in `src/lib/content-playbook.ts`: `scriptPlaybook(planContent())` is in the

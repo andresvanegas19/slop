@@ -2,7 +2,8 @@
 
 /* "Stories" flow state: POST /api/stories streams story cards + stills; POST /api/stories/:id/render makes videos. */
 import { useRef, useState } from "react";
-import { streamJson, type StreamEvent } from "../stream";
+import type { StreamEvent } from "../stream";
+import { runJob } from "../jobs";
 import type { Project } from "../types";
 import { errorMessage, isProject } from "../utils";
 
@@ -88,7 +89,7 @@ export function useStories(options: { onProjects: (projects: Project[]) => void 
       }
     };
     try {
-      const { ok, result } = await streamJson<StoriesResult>("/api/stories", { prompt, count, durationSec }, onEvent, controller.signal);
+      const { ok, result } = await runJob<StoriesResult>("/api/stories", { prompt, count, durationSec }, onEvent, controller.signal, { meta: { kind: "stories", prompt } });
       if (!ok || typeof result.storySetId !== "string" || !Array.isArray(result.stories)) throw new Error(errorMessage(result, "The stories could not be written."));
       const finals = result.stories.map(asStory).filter((story): story is StoryCard => story !== null).map((story, index) => ({ ...story, index }));
       update(key, (current) => ({ ...current, setId: result.storySetId as string, status: "ready", stories: finals.reduce(mergeStory, current.stories.filter((story) => finals.some((item) => item.id === story.id))) }));
@@ -124,7 +125,7 @@ export function useStories(options: { onProjects: (projects: Project[]) => void 
       update(key, (value) => ({ ...value, renders: { ...value.renders, [raw.storyId as string]: state } }));
     };
     try {
-      const { ok, result } = await streamJson<RenderResult>(`/api/stories/${current.setId}/render`, { storyIds, durationSec: current.durationSec }, onEvent, controller.signal);
+      const { ok, result } = await runJob<RenderResult>(`/api/stories/${current.setId}/render`, { storyIds, durationSec: current.durationSec }, onEvent, controller.signal, { meta: { kind: "stories-render", prompt: current.prompt } });
       if (!ok || !Array.isArray(result.projects)) throw new Error(errorMessage(result, "The story video could not be rendered."));
       const projects = result.projects.filter(isProject);
       update(key, (value) => ({ ...value, status: "ready" }));

@@ -371,6 +371,38 @@ def test_storyline_request_validation(settings):
     assert service.handle("GET", "/research/{}/other".format(st.session_id), None) is None
 
 
+def test_competitor_status_tells_the_app_whether_to_keep_following(settings):
+    service, manager, _ = service_for(settings, auto=True)
+    running = acme_state("research_running", is_test=False)
+    running.profile, running.status = None, ResearchStatus.researching
+    no_profile = acme_state("research_no_profile", is_test=False)
+    no_profile.profile = None
+    old = acme_state("research_old2", created_at=datetime(2020, 1, 1, tzinfo=timezone.utc), is_test=False)
+    for st in (running, no_profile, old):
+        manager.store.save(st)
+    assert service.competitors_view("research_running")["status"] == "waiting"  # starts once it has a profile
+    assert service.competitors_view("research_no_profile")["status"] == "none"  # done without one: never starts
+    assert service.competitors_view("research_old2")["status"] == "none"  # predates this worker
+    assert not service.pending("research_no_profile") and not service.pending("research_old2")
+
+
+def test_storyline_failure_is_reported_and_unlocks(settings, monkeypatch):
+    import agent.story_api as story_api
+    service, manager, _ = service_for(settings)
+    st = acme_state()
+    manager.store.save(st)
+
+    def boom(*args, **kwargs):
+        raise KeyError("model output")
+    monkeypatch.setattr(story_api, "write_storyline", boom)
+    path = "/research/{}/storyline".format(st.session_id)
+    status, body = service.handle("POST", path, {"duration_sec": 15, "templates": TEMPLATES, "wait_s": 0})
+    assert status == 500 and "could not write the storyline" in body["error"]
+    last = manager.store.events(st.session_id)[-1]
+    assert last["type"] == "storyline" and last["stage"] == "error"
+    assert not service.pending(st.session_id)
+
+
 # --- detection --------------------------------------------------------------------------------------------------------
 def test_rule_company():
     assert rule_company("Make an ad for Linear") == ("Linear", None)

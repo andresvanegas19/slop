@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { loadProject, ProjectNotFoundError, saveProject, withProjectLock } from "@/lib/projects";
@@ -33,4 +34,4 @@ async function handleDelete(_request: Request, { params }: { params: Promise<{ i
   }
 }
 
-export const DELETE = jobable("remove-frame", handleDelete);
+export const DELETE = withRouteLog(jobable("remove-frame", handleDelete));

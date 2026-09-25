@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from contracts import TABLES, EventType
+from core.logs import event, in_context
 from contracts.research import (FINAL_STATUSES, FINDING_TOPICS, QUESTION_TOPICS, CompanyProfile, Finding,
                                 FollowUpQuestion, NewsItem, PageVisit, ResearchEventRow, ResearchIntent,
                                 ResearchSessionState, ResearchStatus, SourcedText, VideoBrief, VisualIdentity,
@@ -205,6 +206,10 @@ class ResearchSession:
         return self.state.intent.company_name if self.state.intent else ""
 
     def emit(self, type_, **data):
+        # Mirror the session's event log into the structured log (status / finding / question / error …).
+        event(log, "research_" + type_, logging.WARNING if type_ == "error" else logging.INFO if type_ in (
+            "status", "question", "profile") else logging.DEBUG,
+              **{k: v for k, v in data.items() if isinstance(v, (str, int, float, bool)) and k != "quote"})
         return self.store.append_event(self.sid, type_, data)
 
     def save(self):
@@ -221,7 +226,9 @@ class ResearchSession:
         return self.thread is not None and self.thread.is_alive()
 
     def start(self):
-        self.thread = threading.Thread(target=self.run, name="research-" + self.sid[-8:], daemon=True)
+        # The session thread keeps the trace of the request that started it, plus the session id.
+        self.thread = threading.Thread(target=in_context(self.run, sessionId=self.sid), name="research-" + self.sid[-8:],
+                                       daemon=True)
         self.thread.start()
 
     def stop(self):
@@ -740,6 +747,7 @@ class ResearchSession:
                 messages += [AIMessage(text), HumanMessage("Tool budget reached. Write the Final Answer now.")]
                 continue
             tool = lc.get(name)
+            t0 = time.perf_counter()
             if tool is None:
                 obs = json.dumps({"error": "unknown tool {!r}; use one of {}".format(name, sorted(lc))})
             else:
@@ -747,6 +755,10 @@ class ResearchSession:
                     obs = tool.invoke(args or {})
                 except Exception as e:
                     obs = json.dumps({"error": "bad arguments: {}".format(str(e)[:300])})
+            event(log, "tool_call_done", logging.INFO if '"error"' not in obs[:20] else logging.WARNING, tool=name,
+                  step=step, round=n, ok='"error"' not in obs[:20], inputChars=len(json.dumps(args or {}, default=str)),
+                  outputChars=len(obs), error=obs[:200] if '"error"' in obs[:20] else None,
+                  durationMs=int((time.perf_counter() - t0) * 1000))
             self.emit("status", status=self.state.status.value, message="tool {}".format(name), tool=name,
                       step=step, ok='"error"' not in obs[:20])
             messages += [AIMessage("Action: {}\nAction Input: {}".format(name, json.dumps(args, default=str))),

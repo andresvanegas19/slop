@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { isPresetDuration, isPresetId, PRESET_DURATIONS, presetTemplates } from "@/lib/presets";
 import { badSessionId, jsonBody, proxyJson } from "@/lib/research-agent";
@@ -11,7 +12,7 @@ const MAX_WAIT_S = 45;
 const STORYLINE_TIMEOUT_MS = 150_000;
 
 /** GET → `{ storyline }` (the latest version) or 404 when none was written yet. */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routeGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return badSessionId(id) ?? proxyJson("research_storyline_get", `/research/${id}/storyline`);
 }
@@ -23,7 +24,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
  * POST `{ edits: { title?, logline?, call_to_action?, beats?: [{ message?, visual? }] } }` → `{ storyline }` saves the
  * user's edits as a new version (rejected with 400 when they name a competitor).
  */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function routePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const invalid = badSessionId(id);
   if (invalid) return invalid;
@@ -60,3 +61,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     wait_s: waitSec,
   });
 }
+
+export const GET = withRouteLog(routeGET);
+export const POST = withRouteLog(routePOST);

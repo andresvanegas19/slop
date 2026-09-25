@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { randomUUID } from "node:crypto";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { streamable } from "@/lib/ndjson";
@@ -227,4 +228,4 @@ async function handlePost(request: Request) {
 }
 
 /** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
-export const POST = jobable("preset", logUserPrompt((body) => (body.preset === "company" ? "preset_company" : "preset_ad"), streamable(handlePost)));
+export const POST = withRouteLog(jobable("preset", logUserPrompt((body) => (body.preset === "company" ? "preset_company" : "preset_ad"), streamable(handlePost))));

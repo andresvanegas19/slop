@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { logUserPrompt } from "@/lib/user-prompts";
 import { streamable } from "@/lib/ndjson";
@@ -59,4 +60,4 @@ async function handlePost(request: Request) {
 }
 
 /** Same as above; `Accept: application/x-ndjson` (or ?stream=1) streams progress events, then {"type":"done", …body}. */
-export const POST = jobable("clip", logUserPrompt("new_clip", streamable(handlePost)));
+export const POST = withRouteLog(jobable("clip", logUserPrompt("new_clip", streamable(handlePost))));

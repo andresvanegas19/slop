@@ -1,14 +1,14 @@
 "use client";
 
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import BlobLoader from "@/components/BlobLoader";
 import ChatThread from "@/components/studio/ChatThread";
+import GenerationStage from "@/components/studio/GenerationStage";
 import Composer from "@/components/studio/Composer";
 import Editor from "@/components/studio/Editor";
-import HistoryPanel from "@/components/studio/HistoryPanel";
+import HistoryPanel, { GeneratingRow } from "@/components/studio/HistoryPanel";
 import ResearchMessages from "@/components/studio/ResearchMessages";
 import { useStudio } from "@/components/studio/hooks/useStudio";
-import { CANCEL_BUTTON, LABEL, cn, fade, fadeUp } from "@/components/studio/ui";
+import { LABEL, cn, fade, fadeUp } from "@/components/studio/ui";
 import { formatWindow } from "@/components/studio/utils";
 
 const PANEL_EASE = "duration-[450ms] ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none";
@@ -19,6 +19,8 @@ export default function Home() {
   const researchSession = s.research.session;
   // The conversation layout is used for editor threads and for a company research session.
   const hasThread = s.hasThread || researchSession !== null;
+  // A new generation takes over the main stage (the composer stays below, disabled for new generations).
+  const showStage = s.isGenerating && !isEditorOpen && !hasThread;
   const threadTitle = isEditorOpen ? s.openTitle : researchSession?.company ? `Researching ${researchSession.company}` : "Company research";
 
   return (
@@ -77,16 +79,27 @@ export default function Home() {
             )}
           >
             <span className={cn(LABEL, hasThread ? "mb-1.5" : "mb-6")}>AI video studio</span>
-            <h1
-              className={cn(
-                "m-0 font-normal text-[#f5f5f5]",
-                hasThread ? "truncate text-[20px] tracking-[-.01em]" : isEditorOpen ? "text-[clamp(28px,3vw,46px)] tracking-[-.04em]" : "text-[clamp(38px,5vw,70px)] tracking-[-.04em] max-[760px]:text-[39px]",
+            <AnimatePresence mode="wait" initial={false}>
+              {showStage ? (
+                <motion.div key="stage" className="mb-[34px] max-[760px]:mb-[22px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}>
+                  <GenerationStage kind={s.generatingKind} clipCopy={s.clipCopy} prompt={s.generatingPrompt} live={s.generationLive} onCancel={s.cancelGeneration} />
+                </motion.div>
+              ) : (
+                <motion.div key="heading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}>
+                  <h1
+                    className={cn(
+                      "m-0 font-normal text-[#f5f5f5]",
+                      hasThread ? "truncate text-[20px] tracking-[-.01em]" : isEditorOpen ? "text-[clamp(28px,3vw,46px)] tracking-[-.04em]" : "text-[clamp(38px,5vw,70px)] tracking-[-.04em] max-[760px]:text-[39px]",
+                    )}
+                  >
+                    {hasThread ? threadTitle : <>What&apos;s on your mind today?</>}
+                  </h1>
+                  {!hasThread && <p className={cn("mt-[13px] text-[#a9a9a9]", isEditorOpen ? "mb-[26px] text-[14px]" : "mb-[45px] text-[17px] max-[760px]:mb-[26px]")}>Describe a moment and get a {s.clipCopy} video. Or use + to make an ad, a company short, or a competitor summary.</p>}
+                </motion.div>
               )}
-            >
-              {hasThread ? threadTitle : <>What&apos;s on your mind today?</>}
-            </h1>
-            {!hasThread && <p className={cn("mt-[13px] text-[#a9a9a9]", isEditorOpen ? "mb-[26px] text-[14px]" : "mb-[45px] text-[17px] max-[760px]:mb-[26px]")}>Describe a moment and get a {s.clipCopy} video. Or use + to make an ad, a company short, or a competitor summary.</p>}
+            </AnimatePresence>
             {hasThread && <ChatThread threadRef={s.threadRef} thread={s.thread} pendingOp={s.pendingOp} isEditing={s.isEditing} onRetry={s.retryThreadOp} onCancel={s.cancelEdit}
+                onStartNewVideo={s.startSuggestedVideo} onKeepEditing={() => s.promptInputRef.current?.focus()}
                 lead={researchSession && (
                   <ResearchMessages
                     session={researchSession}
@@ -97,12 +110,22 @@ export default function Home() {
                     onLoop={(looping) => void s.research.setLooping(looping)}
                     onStop={() => void s.research.stop()}
                     onCreate={s.createVideoFromResearch}
+                    onApproveStoryline={(edits) => void s.approveStoryline(edits)}
                     onDismiss={s.dismissResearch}
                   />
                 )}
               />}
             <Composer studio={s} />
-            {s.isGenerating && !s.isContinueMode && <div className="hidden max-[760px]:mt-[18px] max-[760px]:block"><BlobLoader label={s.mediaType === "ad" ? "Creating your ad" : s.mediaType === "company" ? "Creating your company short" : "Preparing your video"} size={140} /><button type="button" className={CANCEL_BUTTON} onClick={s.cancelGeneration}>Cancel</button></div>}
+            {s.isGenerating && !s.isContinueMode && !showStage && <GeneratingRow className="mx-auto mt-[18px] hidden max-w-[420px] max-[760px]:flex" kind={s.generatingKind} live={s.generationLive} onCancel={s.cancelGeneration} />}
+            <AnimatePresence initial={false}>
+              {s.interruptedJobs.map((job) => (
+                <motion.div key={job.jobId} className="mx-auto mt-3 flex max-w-[600px] flex-wrap items-center gap-2 rounded-[10px] border border-[#a98238] bg-[#49391433] px-3 py-2 text-left text-[12px] text-[#ffdf9b]" role="status" {...fadeUp}>
+                  <span className="min-w-0 flex-1">Interrupted by a server restart{job.prompt ? <> — <span className="text-[#e9d3a0]">“{job.prompt.length > 70 ? `${job.prompt.slice(0, 70)}…` : job.prompt}”</span></> : null}</span>
+                  <button type="button" className="rounded-full border border-[#c79a45] bg-[#c79a45] px-3 py-1 text-[12px] text-black hover:brightness-110" onClick={() => void s.resumeInterruptedJob(job)}>Resume</button>
+                  <button type="button" className="rounded-full border border-[#5a4a2a] bg-transparent px-3 py-1 text-[12px] text-[#d8c290] hover:text-white" onClick={() => s.dismissInterruptedJob(job)}>Dismiss</button>
+                </motion.div>
+              ))}
+            </AnimatePresence>
             <AnimatePresence mode="popLayout">
               {s.error && <motion.p key={`error-${s.error}`} className="mx-auto mt-[15px] text-[13px] text-danger" role="alert" {...fadeUp}>{s.error}</motion.p>}
               {s.notice && !s.error && <motion.p key={`notice-${s.notice}`} className="mx-auto mt-3 text-[12px] text-[#8a8a8a]" role="status" {...fadeUp}>{s.notice}</motion.p>}

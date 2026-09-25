@@ -1,6 +1,8 @@
 """Liquid through OpenRouter as a LangChain chat model. The only LLM factory the agent uses."""
 from langchain_openai import ChatOpenAI
 
+from .llm_log import LlmLogHandler
+
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 
@@ -16,4 +18,5 @@ def liquid_chat_model(settings, timeout_s=90, max_tokens=None, reasoning="low"):
         max_retries=4,  # the openai client backs off on 429/5xx (free-tier rate limits)
         default_headers={"HTTP-Referer": "http://localhost:3000", "X-Title": "Longform company agent"},
         extra_body={"max_tokens": max_tokens or settings.max_tokens, "reasoning": {"effort": reasoning}},
+        callbacks=[LlmLogHandler(settings.model)],  # llm_call_done / llm_call_failed lines (docs/LOGGING.md)
     )

@@ -16,10 +16,11 @@ Nothing is written to RawTree without --publish / publish. Keys come from the re
 """
 import argparse
 import json
-import logging
 import signal
 import sys
 import threading
+
+from core.logs import setup_logging
 
 from .config import load_settings
 from .nimble_fetch import make_fetcher
@@ -131,7 +132,7 @@ def main():
     sub.add_parser("show", help="print the latest cached context")
     sub.add_parser("publish", help="deliver queued agent events to RawTree (permanent)")
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    setup_logging()  # key=value console lines + generation-video/output/logs/agent-<date>.ndjson
 
     settings, store, agent, worker = build(args)
     if args.cmd == "show":

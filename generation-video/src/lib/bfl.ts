@@ -2,7 +2,7 @@ import { loadEnvConfig } from "@next/env";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { ClientAbortedError, abortableDelay, emitEvent, takeJobMemo, throwIfClientAborted } from "@/lib/progress";
-import { logInfo } from "@/lib/runtime-log";
+import { log, logInfo, promptPreview, startTimer, type LogFields } from "@/lib/runtime-log";
 
 const MAX_ATTEMPTS = 3;
 const MAX_POLL_MS = 120_000;
@@ -180,7 +180,9 @@ function validatedPollingUrl(submission: Submission) {
   return pollingUrl;
 }
 
-async function pollForSample(pollingUrl: URL, maxPollMs: number, resultLabel: string) {
+type PollStats = { polls: number; pollingId?: string; meta?: LogFields };
+
+async function pollForSample(pollingUrl: URL, maxPollMs: number, resultLabel: string, stats: PollStats = { polls: 0 }) {
   const deadline = Date.now() + maxPollMs;
   let interval = 500;
   let lastStatus = "unknown";
@@ -191,6 +193,10 @@ async function pollForSample(pollingUrl: URL, maxPollMs: number, resultLabel: st
     const pollResponse = await request(pollingUrl.toString(), { headers: { "x-key": headers()["x-key"] } }, "Polling the BFL job");
     if (!pollResponse.ok) throw await httpError("Could not poll the BFL job", pollResponse);
     const job = await readJson<PollResponse>(pollResponse, "Polling the BFL job");
+    stats.polls += 1;
+    if ((job.status ?? "unknown") !== lastStatus) {
+      log("info", "bfl_status", { ...stats.meta, pollingId: stats.pollingId, from: lastStatus, to: job.status ?? "unknown", polls: stats.polls, elapsedMs: Date.now() - startedAt });
+    }
     lastStatus = job.status ?? "unknown";
     const progress = typeof job.progress === "number" && Number.isFinite(job.progress)
       ? Math.min(1, Math.max(0, job.progress > 1 ? job.progress / 100 : job.progress))
@@ -231,15 +237,17 @@ function stepKey(kind: "image" | "video", url: string, payload: string) {
  * already submitted this exact request (< 1h ago), polls that request instead of paying for a new one; if the old
  * request can't be polled any more, falls back to a fresh submission. New submissions are reported as `bfl_pending`.
  */
-async function submitAndPoll(kind: "image" | "video", url: string, payload: string, maxPollMs: number, action: string, rejected: string) {
+async function submitAndPoll(kind: "image" | "video", url: string, payload: string, maxPollMs: number, action: string, rejected: string, meta: LogFields = {}) {
   const step = stepKey(kind, url, payload);
+  const elapsed = startTimer();
+  const fields: LogFields = { kind, endpoint: new URL(url).pathname.replace(/^\/v1\//, ""), ...meta };
   const previous = takeJobMemo(step);
   if (previous) {
     try {
       const pollingUrl = validatedPollingUrl({ polling_url: previous });
       logInfo("bfl_resume_polling", { kind, step });
       emitEvent({ type: "stage", stage: kind, label: kind === "video" ? "Picking up the video BFL was already generating…" : "Picking up the image BFL was already generating…" });
-      const sample = await pollForSample(pollingUrl, maxPollMs, kind);
+      const sample = await pollForSample(pollingUrl, maxPollMs, kind, { polls: 0, pollingId: pollingUrl.searchParams.get("id") ?? undefined, meta: fields });
       // Delivery URLs are short-lived: only reuse a result that can still be downloaded.
       const probe = await fetch(sample, { headers: { Range: "bytes=0-0" } });
       await probe.body?.cancel().catch(() => undefined);
@@ -250,12 +258,26 @@ async function submitAndPoll(kind: "image" | "video", url: string, payload: stri
       logInfo("bfl_resume_polling_failed", { kind, step, reason: error instanceof Error ? error.message.slice(0, 200) : String(error) });
     }
   }
-  const submissionResponse = await request(url, { method: "POST", headers: headers(), body: payload }, action);
-  if (!submissionResponse.ok) throw await httpError(rejected, submissionResponse);
-  const submission = await readJson<Submission>(submissionResponse, action);
-  const pollingUrl = validatedPollingUrl(submission);
-  emitEvent({ type: "bfl_pending", step, pollingUrl: pollingUrl.toString() });
-  return pollForSample(pollingUrl, maxPollMs, kind);
+  const stats: PollStats = { polls: 0, meta: fields };
+  let phase = "submit";
+  try {
+    log("debug", "bfl_submit_started", { ...fields, payloadBytes: payload.length });
+    const submissionResponse = await request(url, { method: "POST", headers: headers(), body: payload }, action);
+    if (!submissionResponse.ok) throw await httpError(rejected, submissionResponse);
+    const submission = await readJson<Submission>(submissionResponse, action);
+    const pollingUrl = validatedPollingUrl(submission);
+    stats.pollingId = pollingUrl.searchParams.get("id") ?? undefined;
+    log("info", "bfl_submitted", { ...fields, pollingId: stats.pollingId, submitMs: elapsed() });
+    emitEvent({ type: "bfl_pending", step, pollingUrl: pollingUrl.toString() });
+    phase = "poll";
+    const sample = await pollForSample(pollingUrl, maxPollMs, kind, stats);
+    log("info", "bfl_ready", { ...fields, pollingId: stats.pollingId, polls: stats.polls, durationMs: elapsed() });
+    return sample;
+  } catch (error) {
+    const aborted = error instanceof ClientAbortedError;
+    log(aborted ? "info" : "warn", aborted ? "bfl_aborted" : "bfl_failed", { ...fields, phase, pollingId: stats.pollingId, polls: stats.polls, status: error instanceof BflError ? error.status : undefined, error: error instanceof Error ? error.message : String(error), durationMs: elapsed() });
+    throw error;
+  }
 }
 
 export async function generateBflImage(
@@ -273,7 +295,9 @@ export async function generateBflImage(
     ...(inputImage ? { input_image: inputImage } : {}),
     ...(seed === undefined ? {} : { seed }),
   });
-  return submitAndPoll("image", endpoint(), payload, MAX_POLL_MS, "BFL image request", "BFL rejected the image request");
+  return submitAndPoll("image", endpoint(), payload, MAX_POLL_MS, "BFL image request", "BFL rejected the image request", {
+    mode: inputImage ? "edit" : "t2i", width, height, seed, prompt: promptPreview(prompt),
+  });
 }
 
 /** FLUX 3 accepts whole-second durations from 5 to 20; shorter clips must be trimmed after download. */
@@ -362,7 +386,10 @@ export async function generateBflVideoDetailed(input: {
         draft: settings.draft,
         generate_audio: input.generateAudio ?? true,
       });
-      const url = await submitAndPoll("video", videoEndpoint(), payload, settings.draft ? MAX_VIDEO_POLL_MS : MAX_FINAL_VIDEO_POLL_MS, "BFL video request", "BFL rejected the video request");
+      const url = await submitAndPoll("video", videoEndpoint(), payload, settings.draft ? MAX_VIDEO_POLL_MS : MAX_FINAL_VIDEO_POLL_MS, "BFL video request", "BFL rejected the video request", {
+        mode: input.startVideo ? "v2v" : input.keyframes?.length ? "i2v" : "t2v", quality, draft: settings.draft, resolution: settings.resolution,
+        durationSec: duration, keyframes: input.keyframes?.length, audio: input.generateAudio ?? true, aspectRatio: input.aspectRatio ?? "16:9", prompt: promptPreview(input.prompt),
+      });
       if (quality === "final") acceptedFinalStep = step;
       return { url, draft: settings.draft, resolution: settings.resolution, quality: settings.draft ? "draft" : "final" };
     } catch (error) {

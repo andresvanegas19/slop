@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 import path from "node:path";
 import { ClientAbortedError, progressSignal, recordJobMemo, takeJobMemo } from "@/lib/progress";
+import { callerPurpose, logLlmCall, type LlmUsage } from "@/lib/llm-log";
 
 const API_BASE = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free";
@@ -37,6 +38,8 @@ export type ChatCompletionResult = {
   toolCalls: ChatToolCall[];
   finishReason?: string;
   model: string;
+  /** Token usage reported by OpenRouter (when present). */
+  usage?: LlmUsage;
 };
 
 function loadServerEnvironment() {
@@ -145,8 +148,11 @@ export async function createChatCompletion(request: {
   temperature?: number;
   /** When set, the request streams (SSE) and each content delta is passed here as it arrives. */
   onToken?: (text: string) => void;
+  /** What the call is for, in logs (default: the calling function's name). */
+  purpose?: string;
 }): Promise<ChatCompletionResult> {
   const key = apiKey();
+  const call = logLlmCall({ model: request.model, purpose: request.purpose ?? callerPurpose(), messages: request.messages, tools: request.tools?.length, streamed: Boolean(request.onToken), maxTokens: request.maxTokens });
   // A resumed background job replays the answers its interrupted attempt already got, so the prompts it sends to
   // BFL come out identical and the paid BFL requests can be picked up again (see jobs.ts / bfl.ts).
   const memoStep = `llm:${createHash("sha256").update(JSON.stringify([request.model, request.messages, request.tools ?? null, request.maxTokens ?? null, request.temperature ?? null])).digest("hex").slice(0, 24)}`;
@@ -155,6 +161,7 @@ export async function createChatCompletion(request: {
     try {
       const result = JSON.parse(memoized) as ChatCompletionResult;
       request.onToken?.(result.content);
+      call.memoized(result);
       return result;
     } catch {
       // Fall through to a real request.
@@ -165,24 +172,32 @@ export async function createChatCompletion(request: {
     messages: request.messages,
     ...(request.onToken ? { stream: true } : {}),
     ...(request.tools ? { tools: request.tools, tool_choice: "auto" } : {}),
+    usage: { include: true },
     max_tokens: request.maxTokens ?? 1_024,
     temperature: request.temperature ?? 0.3,
   });
   // Free models are often rate-limited upstream for a few seconds; retry 429/502/503 briefly.
   let response: Response | undefined;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-    response = await fetchWithTimeout(`${API_BASE}/chat/completions`, { method: "POST", headers: headers(key), body: payload }, "OpenRouter chat request");
-    if (response.ok || ![429, 502, 503].includes(response.status) || attempt === MAX_ATTEMPTS - 1) break;
-    const retryAfter = Number(response.headers.get("Retry-After"));
-    const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8_000) : 1_500 * 2 ** attempt;
-    await response.body?.cancel().catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  try {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      response = await fetchWithTimeout(`${API_BASE}/chat/completions`, { method: "POST", headers: headers(key), body: payload }, "OpenRouter chat request");
+      call.attempt(attempt, response.status);
+      if (response.ok || ![429, 502, 503].includes(response.status) || attempt === MAX_ATTEMPTS - 1) break;
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8_000) : 1_500 * 2 ** attempt;
+      await response.body?.cancel().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    if (!response) throw new OpenRouterError("OpenRouter chat request was not sent.", 502);
+    if (!response.ok) throw await httpError("OpenRouter chat request", response);
+    const result = request.onToken ? await readStream(response, request.model, request.onToken) : await readCompletion(response, request.model);
+    call.done(result);
+    recordJobMemo(memoStep, JSON.stringify(result));
+    return result;
+  } catch (error) {
+    call.failed(error);
+    throw error;
   }
-  if (!response) throw new OpenRouterError("OpenRouter chat request was not sent.", 502);
-  if (!response.ok) throw await httpError("OpenRouter chat request", response);
-  const result = request.onToken ? await readStream(response, request.model, request.onToken) : await readCompletion(response, request.model);
-  recordJobMemo(memoStep, JSON.stringify(result));
-  return result;
 }
 
 async function readCompletion(response: Response, requestedModel: string): Promise<ChatCompletionResult> {
@@ -190,6 +205,7 @@ async function readCompletion(response: Response, requestedModel: string): Promi
   const text = await response.text();
   let body: {
     model?: string;
+    usage?: RawUsage;
     error?: { message?: string; code?: number };
     choices?: { finish_reason?: string; message?: { content?: string | null; tool_calls?: ChatToolCall[] } }[];
   };
@@ -209,11 +225,20 @@ async function readCompletion(response: Response, requestedModel: string): Promi
     toolCalls: Array.isArray(choice.message.tool_calls) ? choice.message.tool_calls : [],
     finishReason: choice.finish_reason,
     model: body.model ?? requestedModel,
+    usage: usageOf(body.usage),
   };
+}
+
+type RawUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number };
+
+function usageOf(raw: RawUsage | undefined): LlmUsage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  return { promptTokens: raw.prompt_tokens, completionTokens: raw.completion_tokens, totalTokens: raw.total_tokens, cost: raw.cost };
 }
 
 type StreamChunk = {
   model?: string;
+  usage?: RawUsage;
   error?: { message?: string; code?: number };
   choices?: {
     finish_reason?: string | null;
@@ -233,6 +258,7 @@ async function readStream(response: Response, requestedModel: string, onToken: (
   let content = "";
   let finishReason: string | undefined;
   let model = requestedModel;
+  let usage: LlmUsage | undefined;
   const calls: { id?: string; type?: string; function: { name: string; arguments: string } }[] = [];
   const handle = (line: string) => {
     if (!line.startsWith("data:")) return;
@@ -248,6 +274,7 @@ async function readStream(response: Response, requestedModel: string, onToken: (
       throw new OpenRouterError(`OpenRouter chat request failed mid-stream: ${chunk.error.message ?? "unknown upstream error"}${chunk.error.code ? ` (code ${chunk.error.code})` : ""}.`, 502);
     }
     if (chunk.model) model = chunk.model;
+    if (chunk.usage) usage = usageOf(chunk.usage);
     const choice = chunk.choices?.[0];
     if (!choice) return;
     if (choice.finish_reason) finishReason = choice.finish_reason;
@@ -285,5 +312,5 @@ async function readStream(response: Response, requestedModel: string, onToken: (
   } finally {
     reader.releaseLock();
   }
-  return { content, toolCalls: calls.filter(Boolean), finishReason, model };
+  return { content, toolCalls: calls.filter(Boolean), finishReason, model, usage };
 }

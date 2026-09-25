@@ -2,7 +2,7 @@ import { loadEnvConfig } from "@next/env";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
-import { logError, logException, logInfo } from "@/lib/runtime-log";
+import { currentTrace, log, logError, logException, logInfo } from "@/lib/runtime-log";
 import type { Storyline } from "@/lib/storyline";
 import { ANONYMOUS_USER, parseUserId } from "@/lib/user-context";
 
@@ -122,9 +122,17 @@ export async function agentFetch(pathname: string, init: RequestInit & { timeout
   const base = agentUrl();
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, ...rest } = init;
   const signals = [signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter((s): s is AbortSignal => Boolean(s));
+  // The agent logs with the same trace id (X-Trace-Id), so /api/logs?traceId=… shows both sides.
+  const headers = new Headers(rest.headers);
+  const trace = currentTrace();
+  if (trace) headers.set("X-Trace-Id", trace.traceId);
+  const startedAt = Date.now();
   try {
-    return await fetch(new URL(pathname, base), { ...rest, cache: "no-store", signal: signals.length ? AbortSignal.any(signals) : undefined });
+    const response = await fetch(new URL(pathname, base), { ...rest, headers, cache: "no-store", signal: signals.length ? AbortSignal.any(signals) : undefined });
+    log(response.ok ? "debug" : "warn", "agent_call_done", { method: rest.method ?? "GET", path: pathname.split("?")[0], status: response.status, durationMs: Date.now() - startedAt });
+    return response;
   } catch (error) {
+    log("warn", "agent_call_failed", { method: rest.method ?? "GET", path: pathname.split("?")[0], error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt });
     const code = errorCode(error);
     if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EHOSTUNREACH") {
       throw new ResearchAgentError(`${NOT_RUNNING} (nothing is listening on ${base.host}).`, 503);

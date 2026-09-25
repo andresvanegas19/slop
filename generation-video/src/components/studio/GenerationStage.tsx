@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import BlobLoader from "@/components/BlobLoader";
 import { Spinner, currentStepSeconds, useNow } from "./LiveStatus";
-import { videoFraction } from "./live";
+import { stepText, videoFraction } from "./live";
 import type { HistoryKind, LiveProgress } from "./types";
 import { CANCEL_BUTTON, cn, fade, fadeUp } from "./ui";
 
@@ -16,9 +16,7 @@ export function generatingDetail(kind: HistoryKind, clipCopy: string) {
 }
 
 /** Step labels from the server may already end in an ellipsis; strip it so we never render "……". */
-export function stepText(label: string) {
-  return label.replace(/(?:\.{2,}|…)+\s*$/, "");
-}
+export { stepText };
 
 function formatElapsed(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));

@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { RawTreeConfigurationError } from "@/lib/rawtree";
@@ -15,7 +16,7 @@ const baseHeaders = {
 };
 
 /** GET → the MP4 reassembled from slop_human_video_chunks (cached in output/rawtree-cache), with Range support. */
-export async function GET(request: Request, { params }: { params: Promise<{ sha256: string }> }) {
+async function routeGET(request: Request, { params }: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await params;
   if (!isSha256(sha256)) return NextResponse.json({ error: "sha256 must be 64 lowercase hex characters." }, { status: 400 });
   let asset: Buffer;
@@ -44,3 +45,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ sha2
     headers: { ...baseHeaders, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` },
   });
 }
+
+export const GET = withRouteLog(routeGET);

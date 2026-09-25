@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { segmentFrameFromUpload } from "@/lib/clip-project";
@@ -38,4 +39,4 @@ async function handlePost(request: Request) {
   }
 }
 
-export const POST = jobable("upload", handlePost);
+export const POST = withRouteLog(jobable("upload", handlePost));

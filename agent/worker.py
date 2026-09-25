@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from core.logs import event, in_context, log_context, new_trace_id
 from core.repository import StateRepository
 
 from .react import CompanyAgent
@@ -60,6 +61,11 @@ class AgentWorker:
 
     def tick(self):
         """One loop step. Never raises: a bad tick is logged and the next one tries again."""
+        with log_context(traceId=new_trace_id(), route="agent:tick"):
+            return self._tick()
+
+    def _tick(self):
+        t0 = time.perf_counter()
         summary = {"at": datetime.now(timezone.utc).isoformat(), "core": None, "refreshed": False, "published": 0}
         with self.loop_lock:
             if self.coordinator is not None:
@@ -89,7 +95,11 @@ class AgentWorker:
                 except Exception as e:
                     summary["publish_error"] = "{}: {}".format(type(e).__name__, str(e)[:200])
         self.last_tick = summary
-        log.info("tick %s", json.dumps(summary))
+        event(log, "agent_tick", logging.WARNING if any(k.endswith("error") for k in summary) else logging.INFO,
+              core=summary.get("core"), refreshed=summary.get("refreshed"), steps=summary.get("steps"),
+              llmCalls=summary.get("llm_calls"), tokens=summary.get("tokens"), published=summary.get("published"),
+              agentError=summary.get("agent_error"), publishError=summary.get("publish_error"),
+              durationMs=int((time.perf_counter() - t0) * 1000))
         return summary
 
     def run_forever(self, stop: threading.Event):
@@ -109,13 +119,13 @@ class AgentWorker:
             finally:
                 self.prompt_slots.release()
 
-        future = self.pool.submit(job)
+        future = self.pool.submit(in_context(job))
         try:
             return future.result(timeout=self.settings.prompt_timeout_s), False
         except FutureTimeout:
             return self._cached_or_fallback(cached), True
         except Exception as e:
-            log.warning("prompt run failed: %s", type(e).__name__)
+            event(log, "prompt_run_failed", logging.WARNING, kind=kind, error=type(e).__name__)
             return self._cached_or_fallback(cached), True
 
     def _cached_or_fallback(self, cached):
@@ -138,8 +148,47 @@ def make_handler(worker: AgentWorker):
     class Handler(BaseHTTPRequestHandler):
         server_version = "CompanyAgent/1"
 
-        def log_message(self, fmt, *args):  # no request bodies or prompts in logs
-            log.debug("http %s %s", self.command, self.path.split("?")[0])
+        def log_message(self, fmt, *args):  # no request bodies or prompts in logs; http_request_done covers it
+            pass
+
+        def send_response(self, code, message=None):
+            self._status = code
+            super().send_response(code, message)
+            # The web app sends X-Trace-Id; echo it so both sides of a call can be matched.
+            self.send_header("X-Trace-Id", getattr(self, "_trace_id", "") or "-")
+
+        def _traced(self, handler):
+            """Runs one request inside a log context (the caller's X-Trace-Id, or a new one) and logs
+            http_request_done with method, path, status and durationMs."""
+            incoming = (self.headers.get("X-Trace-Id") or "").strip()
+            self._trace_id = incoming if re.fullmatch(r"[A-Za-z0-9_-]{6,64}", incoming) else new_trace_id()
+            path = self.path.split("?")[0]
+            m = re.match(r"^/research/([A-Za-z0-9_]{1,64})(?:/|$)", path) if path != "/research/detect" else None
+            self._status = None
+            t0 = time.perf_counter()
+            with log_context(traceId=self._trace_id, route="agent:" + path, sessionId=m.group(1) if m else None,
+                             userId=self.headers.get("X-Longform-User") or None):
+                try:
+                    return handler()
+                except Exception as e:
+                    event(log, "http_request_failed", logging.ERROR, method=self.command, path=path,
+                          error="{}: {}".format(type(e).__name__, str(e)[:300]),
+                          durationMs=int((time.perf_counter() - t0) * 1000))
+                    raise
+                finally:
+                    status = self._status or 0
+                    quiet = self.command == "GET" and (path == "/health" or (m is not None and not path.endswith("/events")))
+                    event(log, "http_request_done",
+                          logging.ERROR if status >= 500 else logging.WARNING if status >= 400
+                          else logging.DEBUG if quiet else logging.INFO,
+                          method=self.command, path=path, status=status,
+                          durationMs=int((time.perf_counter() - t0) * 1000))
+
+        def do_GET(self):
+            return self._traced(self._do_GET)
+
+        def do_POST(self):
+            return self._traced(self._do_POST)
 
         def _send(self, status, body):
             data = json.dumps(body, default=str).encode()
@@ -168,7 +217,7 @@ def make_handler(worker: AgentWorker):
                 return None
             return body
 
-        def do_GET(self):
+        def _do_GET(self):
             path, _, query = self.path.partition("?")
             if path == "/health":
                 return self._send(200, worker.health())
@@ -229,7 +278,7 @@ def make_handler(worker: AgentWorker):
                 return
             self.close_connection = True
 
-        def do_POST(self):
+        def _do_POST(self):
             path = self.path.split("?")[0]
             if path == "/context":
                 return self._context()

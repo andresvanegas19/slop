@@ -10,6 +10,8 @@ from typing import Optional
 
 from langchain_core.messages import HumanMessage
 
+from core.logs import in_context
+
 from .react import SPECIAL_TOKEN_RE, _text, loose_json
 
 log = logging.getLogger("agent.story")
@@ -35,7 +37,7 @@ class JsonLlm:
             return self.llm.invoke([HumanMessage(prompt)])
 
         try:
-            message = _POOL.submit(call).result(timeout=timeout_s) if timeout_s else call()
+            message = _POOL.submit(in_context(call)).result(timeout=timeout_s) if timeout_s else call()
         except FutureTimeout:
             with self.lock:
                 self.failures += 1

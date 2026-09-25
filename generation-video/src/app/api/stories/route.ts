@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { streamable } from "@/lib/ndjson";
@@ -58,4 +59,4 @@ async function handlePost(request: Request) {
   }
 }
 
-export const POST = jobable("stories", streamable(handlePost));
+export const POST = withRouteLog(jobable("stories", streamable(handlePost)));

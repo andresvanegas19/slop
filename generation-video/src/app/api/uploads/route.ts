@@ -1,3 +1,4 @@
+import { withRouteLog } from "@/lib/route-log";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
 import { logException, logInfo } from "@/lib/runtime-log";
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /** POST multipart/form-data with field `file` → `{ upload: { id, videoUrl, thumbUrl, durationSeconds, width, height, hasAudio, filename } }` */
-export async function POST(request: Request) {
+async function routePOST(request: Request) {
   try {
     const contentLength = Number(request.headers.get("content-length"));
     // Allow some multipart overhead on top of the file limit.
@@ -35,3 +36,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = withRouteLog(routePOST);

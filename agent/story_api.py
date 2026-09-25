@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from contracts.research import ResearchStatus
 from contracts.story import CompetitiveLandscape, StoryTemplate
+from core.logs import in_context
 
 from .competitors import CompetitorResearch
 from .nimble_fetch import fetcher_name, make_fetcher
@@ -128,7 +129,8 @@ class StoryService:
             existing = self.store.landscape(sid)
             if existing is not None and existing.status in ("done", "running") and not force:
                 return {"session_id": sid, "status": existing.status, "started": False}
-            thread = threading.Thread(target=self._run_competitors, args=(sid,), name="competitors-" + sid[-8:],
+            thread = threading.Thread(target=in_context(self._run_competitors, sessionId=sid), args=(sid,),
+                                      name="competitors-" + sid[-8:],
                                       daemon=True)
             self.jobs[sid] = thread
             thread.start()
@@ -303,9 +305,15 @@ class StoryService:
                 job.join(timeout=min(1.0, max(0.05, deadline - time.time())))
             state = self.research_store.load(sid) or state
             landscape = self.store.landscape(sid)
-            llm = JsonLlm(self.llm_factory(), self.settings.model, timeout_s=self.story_timeout_s)
-            plan = write_storyline(state, landscape, templates, duration, llm, template_hint=hint, prompt=prompt,
-                                   version=(latest.version + 1) if latest else 1)
+            try:
+                llm = JsonLlm(self.llm_factory(), self.settings.model, timeout_s=self.story_timeout_s)
+                plan = write_storyline(state, landscape, templates, duration, llm, template_hint=hint, prompt=prompt,
+                                       version=(latest.version + 1) if latest else 1)
+            except Exception as e:
+                self.research_store.append_event(sid, "storyline", {"stage": "error",
+                                                                    "message": "could not write the storyline"})
+                log.exception("storyline for %s failed", sid)
+                raise RuntimeError("could not write the storyline: {}".format(type(e).__name__))
             self.store.save_storyline(plan)
             self.research_store.append_event(sid, "storyline", {"storyline": plan.model_dump(mode="json"),
                                                                 "reason": "write"})
@@ -379,3 +387,5 @@ class StoryService:
             return 400, {"error": str(e)}
         except ValueError as e:
             return 409, {"error": str(e)}
+        except RuntimeError as e:
+            return 500, {"error": str(e)}

@@ -1,10 +1,10 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import BlobLoader from "@/components/BlobLoader";
-import { currentStepSeconds, useNow } from "./LiveStatus";
+import { generatingLabel, stepText } from "./GenerationStage";
+import { Spinner, useNow } from "./LiveStatus";
 import type { HistoryItem, HistoryKind, LiveProgress } from "./types";
-import { CANCEL_BUTTON, HistoryRowContent, LABEL, cn, collapse, fade, pop, springSoft } from "./ui";
+import { HistoryRowContent, LABEL, cn, collapse, fade, springSoft } from "./ui";
 
 type HistoryPanelProps = {
   history: HistoryItem[];
@@ -20,35 +20,30 @@ type HistoryPanelProps = {
   generationLive: LiveProgress | null;
 };
 
-function generatingLabel(kind: HistoryKind) {
-  return kind === "rawtree" ? "Summarizing competitor moves" : kind === "storyboard" ? "Rendering your storyboard" : kind === "upload" ? "Importing your video" : kind === "ad" ? "Creating your ad" : kind === "company" ? "Creating your company short" : "Preparing your video";
-}
-
-function generatingDetail(kind: HistoryKind, clipCopy: string) {
-  return kind === "upload" ? "Preparing frames from your clip…" : kind === "rawtree" ? "Reading the latest competitor data from RawTree and rendering a short…" : kind === "storyboard" ? "Rendering scenes, motion, overlays, and narration…" : kind === "ad" ? "Writing your ad and rendering scenes… this takes 1–3 minutes." : kind === "company" ? "Writing your story and rendering scenes… this takes 1–3 minutes." : `Generating a ${clipCopy} clip with sound…`;
-}
-
 /** The side panel's default view: generating card, collapsible history list, and the output note. */
-export default function HistoryPanel({ history, isHistoryOpen, onToggleHistory, openProjectId, onOpenProject, isGenerating, generatingKind, clipCopy, onCancelGeneration, generationLive }: HistoryPanelProps) {
-  const now = useNow(isGenerating && generationLive !== null);
-  const step = generationLive?.steps[generationLive.steps.length - 1];
-  const seconds = generationLive ? currentStepSeconds(generationLive, now) : 0;
-  const liveDetail = step ? `${step.label}…${seconds >= 1 ? ` ${seconds}s` : ""}` : null;
+/** One-line "generating" row (spinner · label · elapsed · ✕); the main stage shows the full GenerationStage view. */
+export function GeneratingRow({ kind, live, onCancel, className }: { kind: HistoryKind; live: LiveProgress | null; onCancel: () => void; className?: string }) {
+  const now = useNow(true);
+  const step = live?.steps[live.steps.length - 1];
+  const elapsed = live ? Math.max(0, Math.round((now - live.startedAt) / 1000)) : null;
+  const label = step ? stepText(step.label) : generatingLabel(kind);
+  return (
+    <div className={cn("flex items-center gap-2 rounded-[10px] border border-[#1f3a26] bg-[#0b0b0b] px-2.5 py-2 text-left text-[12px] text-[#cfe3d4]", className)} role="status">
+      <Spinner />
+      <span className="min-w-0 flex-1 truncate" title={label}>{label}…</span>
+      {elapsed !== null && elapsed >= 1 && <span className="flex-none text-[11px] text-faint tabular-nums">{elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, "0")}s` : `${elapsed}s`}</span>}
+      <button type="button" className="grid h-5 w-5 flex-none place-items-center rounded-full border-0 bg-[#1f1f1f] text-[10px] text-[#9a9a9a] hover:bg-[#333] hover:text-white" onClick={onCancel} aria-label="Cancel generation" title="Cancel (Esc)">✕</button>
+    </div>
+  );
+}
+
+export default function HistoryPanel({ history, isHistoryOpen, onToggleHistory, openProjectId, onOpenProject, isGenerating, generatingKind, onCancelGeneration, generationLive }: HistoryPanelProps) {
   return (
     <>
       <AnimatePresence initial={false}>
         {isGenerating && (
           <motion.div key="generating" className="overflow-hidden" {...collapse}>
-            <motion.div
-              className="mt-[28px] grid justify-items-center rounded-[13px] border border-[#1f3a26] bg-[#0b0b0b] bg-[radial-gradient(circle_at_50%_40%,#0f2a1655,transparent_70%)] px-2.5 py-4 text-center"
-              initial={{ scale: 0.97 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.97 }}
-              transition={pop.transition}
-            >
-              <BlobLoader label={generatingLabel(generatingKind)} detail={liveDetail ?? generatingDetail(generatingKind, clipCopy)} size={200} />
-              <button type="button" className={CANCEL_BUTTON} onClick={onCancelGeneration}>Cancel <kbd className="ml-1.5 rounded border border-[#3a3a3a] px-[5px] py-px [font-family:inherit] text-[10px] text-[#8a8a8a]">Esc</kbd></button>
-            </motion.div>
+            <GeneratingRow className="mt-[28px]" kind={generatingKind} live={generationLive} onCancel={onCancelGeneration} />
           </motion.div>
         )}
       </AnimatePresence>

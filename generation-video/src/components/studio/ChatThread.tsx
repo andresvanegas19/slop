@@ -4,7 +4,7 @@ import { motion, type Variants } from "motion/react";
 import type { ReactNode, RefObject } from "react";
 import BlobLoader from "@/components/BlobLoader";
 import LiveStatus from "./LiveStatus";
-import type { MemoryChip, PendingOp, ThreadEntry } from "./types";
+import type { MemoryChip, NewVideoSuggestion, PendingOp, ThreadEntry } from "./types";
 import { cn, fade, spring } from "./ui";
 
 type ChatThreadProps = {
@@ -16,7 +16,14 @@ type ChatThreadProps = {
   onCancel: () => void;
   /** Messages rendered before the thread (e.g. a company research session). */
   lead?: ReactNode;
+  /** "This sounds like a new video" bubbles: start it (closes the editor) or keep editing. */
+  onStartNewVideo?: (suggestion: NewVideoSuggestion) => void;
+  onKeepEditing?: () => void;
 };
+
+type SuggestionActions = { onStartNewVideo?: (suggestion: NewVideoSuggestion) => void; onKeepEditing?: () => void };
+
+const SUGGESTION_LABEL: Record<NewVideoSuggestion["preset"], string> = { company: "Start a new company video", ad: "Start a new ad", clip: "Start a new video" };
 
 const list: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.035 } } };
 export const bubble: Variants = { hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0, transition: fade } };
@@ -34,7 +41,7 @@ function Figure({ src, alt, caption }: { src: string; alt: string; caption: stri
   );
 }
 
-function Entry({ entry }: { entry: ThreadEntry }) {
+function Entry({ entry, actions }: { entry: ThreadEntry; actions?: SuggestionActions }) {
   if (entry.role === "user") {
     return (
       <motion.div variants={bubble} className={cn(BUBBLE, "items-center self-end rounded-br-[5px] bg-blue text-white")}>
@@ -62,6 +69,16 @@ function Entry({ entry }: { entry: ThreadEntry }) {
         </motion.span>
       )}
       {entry.text && <p className={TEXT}>{entry.text}</p>}
+      {entry.suggestion && actions?.onStartNewVideo && (
+        <div className="mt-0.5 flex flex-wrap gap-1.5">
+          <button type="button" className="rounded-full border border-accent bg-accent px-3 py-1.5 text-[12px] text-white hover:brightness-110" onClick={() => actions.onStartNewVideo?.(entry.suggestion!)}>
+            {SUGGESTION_LABEL[entry.suggestion.preset]}
+          </button>
+          <button type="button" className="rounded-full border border-chip-line bg-chip px-3 py-1.5 text-[12px] text-[#cfcfcf] hover:bg-chip-hover hover:text-white" onClick={actions.onKeepEditing}>
+            Keep editing this one
+          </button>
+        </div>
+      )}
       {entry.edited && (entry.beforeUrl || entry.afterUrl) && (
         <div className="flex items-center gap-2">
           {entry.beforeUrl && <Figure src={entry.beforeUrl} alt="Before" caption="Before" />}
@@ -125,7 +142,9 @@ function MemoryRow({ sources }: { sources: MemoryChip[] }) {
 }
 
 /** Continue-mode conversation: saved + local entries, then the pending operation (running or failed with Retry). */
-export default function ChatThread({ threadRef, thread, pendingOp, isEditing, onRetry, onCancel, lead }: ChatThreadProps) {
+export default function ChatThread({ threadRef, thread, pendingOp, isEditing, onRetry, onCancel, lead, onStartNewVideo, onKeepEditing }: ChatThreadProps) {
+  // Only the latest new-video suggestion keeps its buttons.
+  const lastSuggestion = [...thread].reverse().find((entry) => entry.suggestion)?.id;
   return (
     <motion.div
       className="mt-[14px] mb-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1.5 py-2 text-left [scrollbar-color:#333_transparent] max-[760px]:max-h-[60vh]"
@@ -136,7 +155,7 @@ export default function ChatThread({ threadRef, thread, pendingOp, isEditing, on
       animate="visible"
     >
       {lead}
-      {thread.map((entry) => <Entry key={entry.id} entry={entry} />)}
+      {thread.map((entry) => <Entry key={entry.id} entry={entry} actions={entry.id === lastSuggestion ? { onStartNewVideo, onKeepEditing } : undefined} />)}
       {pendingOp && (
         <>
           <Entry key={pendingOp.user.id} entry={pendingOp.user} />

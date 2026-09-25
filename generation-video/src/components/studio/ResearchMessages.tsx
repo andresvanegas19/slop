@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { BUBBLE, LINK, TEXT, bubble } from "./ChatThread";
 import { Spinner } from "./LiveStatus";
 import { isResearchRunning, researchCounts, shortUrl } from "./research";
+import { CompetitorsCard, StorylineCard } from "./StorylineMessages";
 import type { ResearchQuestion, ResearchSession } from "./types";
 import { cn, collapse, fade, spring } from "./ui";
 
@@ -17,7 +18,9 @@ type ResearchMessagesProps = {
   onAnswer: (questionId: string, answer: string) => void;
   onLoop: (looping: boolean) => void;
   onStop: () => void;
-  onCreate: () => void;
+  /** Asks the agent for a storyline (optionally with a template); nothing renders until it is approved. */
+  onCreate: (template?: string) => void;
+  onApproveStoryline: (edits: Record<string, unknown> | null) => void;
   onDismiss: () => void;
 };
 
@@ -29,12 +32,12 @@ function plural(count: number, word: string) {
 }
 
 /** The research session as chat messages: the user's request, the live research card, and follow-up questions. */
-export default function ResearchMessages({ session, readOnly, isGenerating, actionError, onAnswer, onLoop, onStop, onCreate, onDismiss }: ResearchMessagesProps) {
+export default function ResearchMessages({ session, readOnly, isGenerating, actionError, onAnswer, onLoop, onStop, onCreate, onApproveStoryline, onDismiss }: ResearchMessagesProps) {
   const [showFindings, setShowFindings] = useState(false);
   const running = isResearchRunning(session);
   const counts = researchCounts(session);
   const company = session.company || "your company";
-  const canCreate = session.profile !== null && session.profile !== undefined && !isGenerating;
+  const canCreate = session.profile !== null && session.profile !== undefined && !isGenerating && !session.storylineWriting;
   const statsLine = [plural(counts.pages, "page"), plural(counts.findings, "finding"), counts.tokens > 0 ? `${Math.round(counts.tokens / 100) / 10}k tokens` : null].filter(Boolean).join(" · ");
   const activity = session.statusLabel ?? (session.currentPage ? `Reading ${shortUrl(session.currentPage)}` : "Starting research");
 
@@ -106,23 +109,25 @@ export default function ResearchMessages({ session, readOnly, isGenerating, acti
           </button>
           {running && <button type="button" className={cn(SMALL_PILL, "border-danger-line bg-danger-bg text-danger-soft hover:bg-[#3a1616]")} onClick={onStop}>Stop</button>}
           {!readOnly && <button type="button" className={cn(LINK, "mt-0 text-[11px]")} onClick={onDismiss}>Dismiss</button>}
-          {!readOnly && (
+          {!readOnly && !session.storyline && (
             <motion.button
               type="button"
               className="ml-auto rounded-full border-0 bg-blue px-3.5 py-1.5 text-[12px] font-semibold text-white transition-colors duration-150 enabled:hover:bg-blue-hover disabled:bg-[#343434] disabled:text-[#777]"
               disabled={!canCreate}
-              title={session.profile ? "Write and render the company short from this research" : "Available once the research has a company profile"}
+              title={session.profile ? "Write a storyline from your request and this research; you review it before anything renders" : "Available once the research has a company profile"}
               whileTap={canCreate ? { scale: 0.95 } : undefined}
               transition={spring}
-              onClick={onCreate}
+              onClick={() => onCreate()}
             >
-              {isGenerating ? "Creating…" : "Create video now"}
+              {session.storylineWriting ? "Writing storyline…" : isGenerating ? "Creating…" : "Create video now"}
             </motion.button>
           )}
         </div>
       </motion.div>
 
       {session.questions.map((question) => <Question key={question.id} question={question} onAnswer={onAnswer} />)}
+      {session.competitors && <CompetitorsCard competitors={session.competitors} />}
+      <StorylineCard session={session} readOnly={readOnly} isGenerating={isGenerating} onWrite={onCreate} onApprove={onApproveStoryline} />
     </>
   );
 }

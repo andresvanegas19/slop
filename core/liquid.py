@@ -1,6 +1,7 @@
 """The only place that talks to Liquid. Liquid extracts facts and writes copy; it never decides state (DECISIONS D2)."""
 import hashlib
 import json
+import logging
 import re
 import time
 from typing import Dict, Optional, Tuple
@@ -8,6 +9,9 @@ from typing import Dict, Optional, Tuple
 from contracts import EvidenceEnvelope, ModelCallRecord
 
 from .http import request_json
+from .logs import event
+
+log = logging.getLogger("core.liquid")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
@@ -94,6 +98,11 @@ class LiquidAdapter:
             latency_ms=int((time.time() - t0) * 1000), ok=ok,
             error=None if ok else "HTTP {}: {}".format(status, str(res)[:200]))
         text = res["choices"][0]["message"]["content"] if ok else ""
+        event(log, "llm_call_done" if ok else "llm_call_failed", logging.INFO if ok else logging.WARNING,
+              model=self.model, purpose=purpose, runId=run_id, promptChars=len(prompt), responseChars=len(text or ""),
+              inputTokens=record.input_tokens, outputTokens=record.output_tokens,
+              reasoningTokens=record.reasoning_tokens or None, attempts=attempt + 1, status=status,
+              error=record.error, durationMs=record.latency_ms)
         return text, record
 
     def extract_pricing(self, env: EvidenceEnvelope, run_id: str) -> Tuple[Facts, ModelCallRecord]:

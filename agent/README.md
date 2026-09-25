@@ -15,7 +15,7 @@ storyboard.
 .venv/bin/python -m agent ask "launch video for our new plan" --kind video
 .venv/bin/python -m agent show                   # latest cached context
 .venv/bin/python -m agent publish                # deliver queued agent events (permanent!)
-.venv/bin/python -m agent research "Make a company video for Coca-Cola" [--rounds 2]   # one research session
+.venv/bin/python -m agent research "Make a company video for Coca-Cola" [--rounds 2] [--competitors]   # one research session
 .venv/bin/python -m pytest tests -q              # offline tests, no network
 ```
 
@@ -44,6 +44,11 @@ RawTree slop_human* + core state.db ──tools (contracts/)──► ReAct loop
 | `research_tools.py` | `ResearchTools`: `fetch_page`, `list_links`, `record_finding`, `get_findings`, `ask_user`, `get_user_answers`, `get_recent_videos`, `get_user_context` |
 | `research_store.py` | `ResearchStore` (`agent.db`): sessions, append-only event log, fetched page text |
 | `web.py` | Direct website fetching: host allowlist, robots.txt, 10 s / 1.5 MB caps, HTML → clean text, links, colors |
+| `nimble_fetch.py` | `NimbleFetcher`: same API as `web.py`, content through Nimble (`acquisition/nimble.py`); allowlist, DNS and robots.txt checked first; `make_fetcher()` picks it when `NIMBLE_API_KEY` is set |
+| `competitors.py` | `CompetitorResearch`: Liquid proposes competitors (plus `config/watch.yaml` peers), homes are verified, ≤ `RESEARCH_COMPETITOR_PAGES` pages each, quote-verified findings, `CompetitiveLandscape` (differentiators, names to avoid) |
+| `storyline.py` | `write_storyline` tool: request + profile + landscape → `StoryPlan` with one beat per template role (Liquid picks the template; deterministic fallback); `edit_storyline` for user edits |
+| `story_api.py` | `StoryService`: first-prompt company detection, competitor watcher, `/research/{id}/competitors` and `/storyline` routes |
+| `story_store.py` | `StoryStore` (`agent.db`): competitor landscapes, their pages, storyline versions |
 | `videos.py` | `get_recent_videos`: past videos from `slop_human_video_events` (read-only) |
 | `user_context.py` | `get_user_context`: the user's past prompts from `slop_human_user_prompts` (read-only) |
 
@@ -93,6 +98,34 @@ Worker API (127.0.0.1 only; the web app proxies it under `/api/research`, forwar
 
 Status: `starting` → `researching` ⇄ `waiting` → `done` | `stopped` | `error`. Sessions live in `agent.db`; a restarted
 worker marks running ones `done` (resume with `loop`). Budgets: `RESEARCH_*` in `.env.example`.
+
+### Competitors, storyline and first-prompt detection
+
+The studio's first home prompt goes to `POST /research/detect`: rules first, then Liquid (`RESEARCH_DETECT_TIMEOUT_S`),
+and only a name written in the prompt is accepted. When it names a company the app starts a session. Once the session
+has a profile, the worker's watcher researches up to `RESEARCH_MAX_COMPETITORS` competitors (sessions created while
+this worker runs; not test sessions). Liquid proposes them and `config/watch.yaml` peers are added; each home must
+answer and mention the name. Pages are read with the Nimble fetcher (`RESEARCH_FETCHER`), and competitor findings keep
+the verbatim-quote rule. The resulting `CompetitiveLandscape` holds differentiators (company facts competitors don't
+claim) and `avoid_terms` (their names/domains). **Videos never name competitors**: storylines, edits and generated
+scenes that mention an avoid term are rewritten from facts or rejected.
+
+"Create video now" asks the storyline tool for a `StoryPlan`: the user's request + profile + landscape → one beat per
+role of a template (`ad`, `company`, `competitive`; roles come from the web app's presets). The user reviews/edits it,
+then `POST /api/generate-preset {preset: template, researchSessionId, storyline}` renders it.
+
+| Call | Result |
+|---|---|
+| `POST /research/detect {prompt}` | `{company, likely_domain, video_goal, source: rules \| llm \| none, elapsed_ms}` |
+| `GET /research/{id}/competitors` | `{status: waiting \| running \| done \| error \| interrupted \| none \| off, message, competitors:[{id, name, domain, verified, summary, claims, pages}], differentiators, competitor_themes, avoid_terms, running}` |
+| `POST /research/{id}/competitors {force?}` | 202 `{status, started}` (409 before the session has a profile) |
+| `GET /research/{id}/storyline` | `{storyline}` (latest version; 404 before one exists) |
+| `POST /research/{id}/storyline {duration_sec, templates, template?, prompt?, wait_s?}` | `{storyline, competitors}`: waits up to `wait_s` (≤ 90) for the first profile and a running competitor pass; 409 without a profile, 429 while one is being written |
+| `POST /research/{id}/storyline {edits: {title?, logline?, call_to_action?, beats?: [{message?, visual?}]}}` | `{storyline}` as a new version (`source: "user"`); 400 when an edit names a competitor |
+
+`GET /research/{id}` also returns `competitors` and `storyline`. The event stream adds `competitors` (with a `landscape`
+summary), `competitor` (`stage: verified | researched`), `competitor_page` and `storyline` (`stage: writing | error`, or
+the plan) events, and stays open while competitor research or a storyline is still running.
 
 ## Data boundaries
 
