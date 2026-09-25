@@ -3,6 +3,8 @@ from contracts import BeliefStatus, OpType, Patch, PatchDecision
 
 MAX_PRICE = 100000
 MAX_RATIO = 10  # a >10x jump either way is almost certainly a misreading
+PRICING_PREFIX = "pricing."
+DEVELOPMENT_PREFIX = "developments."
 
 
 class PatchValidator:
@@ -35,13 +37,39 @@ class PatchValidator:
             if op.op == OpType.confirm and op.before != op.after:
                 reasons.append("{}: confirm must not change the value".format(where))
 
-            for v in (op.before, op.after):
-                if isinstance(v, (int, float)) and not 0 <= v <= MAX_PRICE:
-                    reasons.append("{}: value {} out of range".format(where, v))
-            if op.op == OpType.replace and isinstance(op.before, (int, float)) and isinstance(op.after, (int, float)):
-                lo, hi = sorted([op.before, op.after])
-                if lo > 0 and hi / lo > MAX_RATIO:
-                    reasons.append("{}: {} -> {} is a >{}x jump, likely a misreading".format(
-                        where, op.before, op.after, MAX_RATIO))
+            if op.attribute.startswith(PRICING_PREFIX):
+                reasons += self._price_sanity(op, where)
+            elif op.attribute.startswith(DEVELOPMENT_PREFIX):
+                reasons += self._development_shape(op, where)
 
         return PatchDecision(patch_id=patch.patch_id, accepted=not reasons, rejected_reasons=reasons)
+
+    @staticmethod
+    def _price_sanity(op, where):
+        reasons = []
+        for v in (op.before, op.after):
+            if isinstance(v, (int, float)) and not 0 <= v <= MAX_PRICE:
+                reasons.append("{}: value {} out of range".format(where, v))
+        if op.op == OpType.replace and isinstance(op.before, (int, float)) and isinstance(op.after, (int, float)):
+            lo, hi = sorted([op.before, op.after])
+            if lo > 0 and hi / lo > MAX_RATIO:
+                reasons.append("{}: {} -> {} is a >{}x jump, likely a misreading".format(
+                    where, op.before, op.after, MAX_RATIO))
+        return reasons
+
+    @staticmethod
+    def _development_shape(op, where):
+        """developments.<id> beliefs hold a MarketDevelopment as a dict; its id and entity must match the key."""
+        if op.op not in (OpType.add, OpType.replace, OpType.confirm):
+            return []
+        v = op.after
+        if not isinstance(v, dict):
+            return ["{}: development value must be an object".format(where)]
+        reasons = []
+        if v.get("development_id") != op.attribute[len(DEVELOPMENT_PREFIX):]:
+            reasons.append("{}: development_id does not match the attribute".format(where))
+        if v.get("entity_id") != op.entity_id:
+            reasons.append("{}: development is about {}, not {}".format(where, v.get("entity_id"), op.entity_id))
+        if not str(v.get("quote") or "").strip() or not str(v.get("headline") or "").strip():
+            reasons.append("{}: development needs a headline and a quote".format(where))
+        return reasons

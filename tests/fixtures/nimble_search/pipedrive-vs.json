@@ -1,0 +1,100 @@
+{
+ "request": {
+  "query": "Pipedrive vs",
+  "max_results": 10
+ },
+ "response": {
+  "results": [
+   {
+    "title": "Pipedrive vs. HubSpot: Which CRM is best? [2026] - Zapier",
+    "url": "https://zapier.com/blog/pipedrive-vs-hubspot/",
+    "description": "Pipedrive vs. HubSpot at a glance HubSpot is a huge all-in-one business platform with a CRM at its core, while Pipedrive focuses on the tools that sales teams need to succeed. Keep reading for more details on my experiences with the apps.",
+    "metadata": {
+     "position": 1,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive vs HubSpot (Comparison) - Forbes Advisor",
+    "url": "https://www.forbes.com/advisor/business/software/hubspot-vs-pipedrive/",
+    "description": "Our comprehensive comparison of Pipedrive vs HubSpot offers everything you need to make an informed decision when choosing between these two CRM platforms.",
+    "metadata": {
+     "position": 2,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive vs HubSpot CRM | HubSpot Alternative",
+    "url": "https://www.pipedrive.com/en/crm-comparison/pipedrive-vs-hubspot",
+    "description": "Stuck debating Pipedrive vs. Hubspot? Compare CRM capabilities to find the best sales management solution for your business.",
+    "metadata": {
+     "position": 3,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive vs. Salesforce CRM | Salesforce Alternative |",
+    "url": "https://www.pipedrive.com/en/crm-comparison/pipedrive-vs-salesforce",
+    "description": "Compare Pipedrive vs Salesforce. Discover features, pricing, and user feedback to make an informed decision on the best CRM for your business.",
+    "metadata": {
+     "position": 4,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive Vs HubSpot 2026 | My Findings After 4 Weeks -",
+    "url": "https://thebusinessdive.com/pipedrive-vs-hubspot",
+    "description": "In this Pipedrive vs HubSpot review, I'll break down both by features, pricing, and real-world use to help you choose the one for you.",
+    "metadata": {
+     "position": 5,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive CRM Vs. Salesforce Comparison - Forbes Advisor",
+    "url": "https://www.forbes.com/advisor/business/software/pipedrive-crm-vs-salesforce/",
+    "description": "Both Pipedrive and Salesforce are popular CRM and lead management solutions. Read our in-depth comparison to decide which is best for your business.",
+    "metadata": {
+     "position": 6,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive vs. HubSpot: Features, Pricing, and AI Comparison",
+    "url": "https://monday.com/blog/crm-and-sales/pipedrive-vs-hubspot/",
+    "description": "Compare Pipedrive vs. HubSpot across pricing, features, AI, automation, ease of use, and integrations. Plus, see how monday CRM compares.",
+    "metadata": {
+     "position": 7,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive CRM vs HubSpot Comparison 2026: Which Is Best?",
+    "url": "https://crm.org/news/pipedrive-vs-hubspot",
+    "description": "Pipedrive vs Hubspot CRM Comparison Chart The following comparison chart highlights the most important features and processes of HubSpot CRM and Pipedrive CRM. Let's compare HubSpot CRM vs Pipedrive CRM briefly so that you know what you're up against before we dive deep into the complexities of both platforms.",
+    "metadata": {
+     "position": 8,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Salesforce vs HubSpot vs Zoho vs Pipedrive vs Salesflare [2026]",
+    "url": "https://blog.salesflare.com/compare-salesforce-zoho-hubspot-pipedrive",
+    "description": "Compare Salesforce, HubSpot, Zoho, Pipedrive and Salesflare on features, pricing, AI and ease of use, with hands-on findings and user reviews.",
+    "metadata": {
+     "position": 9,
+     "entity_type": "OrganicResult"
+    }
+   },
+   {
+    "title": "Pipedrive vs Salesforce: 2026 CRM Comparison - Avoma",
+    "url": "https://www.avoma.com/blog/salesforce-vs-pipedrive",
+    "description": "The key difference between Pipedrive and Salesforce Pipedrive vs Salesforce is a tough one. There's an \"apples and oranges\" quality to this comparison because the scope of the two products is so different.",
+    "metadata": {
+     "position": 10,
+     "entity_type": "OrganicResult"
+    }
+   }
+  ]
+ }
+}

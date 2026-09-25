@@ -47,7 +47,7 @@ export function formatWhen(iso: string) {
 }
 
 export function kindLabel(kind: HistoryKind) {
-  return kind === "rawtree" ? "Competitor summary" : kind === "storyboard" ? "Storyboard render" : kind === "upload" ? "Uploaded video" : kind === "ad" ? "Ad" : kind === "company" ? "Company" : "Clip";
+  return kind === "market" ? "Market update" : kind === "rawtree" ? "Competitor summary" : kind === "storyboard" ? "Storyboard render" : kind === "upload" ? "Uploaded video" : kind === "ad" ? "Ad" : kind === "company" ? "Company" : "Clip";
 }
 
 /** Index of the frame whose [startSec, startSec + durationSec) range contains `seconds` (last frame at the very end). */

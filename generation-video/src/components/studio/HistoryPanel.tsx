@@ -21,11 +21,11 @@ type HistoryPanelProps = {
 };
 
 function generatingLabel(kind: HistoryKind) {
-  return kind === "rawtree" ? "Summarizing competitor moves" : kind === "storyboard" ? "Rendering your storyboard" : kind === "upload" ? "Importing your video" : kind === "ad" ? "Creating your ad" : kind === "company" ? "Creating your company short" : "Preparing your video";
+  return kind === "market" ? "Rendering your market update" : kind === "storyboard" ? "Rendering your storyboard" : kind === "upload" ? "Importing your video" : kind === "ad" ? "Creating your ad" : kind === "company" ? "Creating your company short" : "Preparing your video";
 }
 
 function generatingDetail(kind: HistoryKind, clipCopy: string) {
-  return kind === "upload" ? "Preparing frames from your clip…" : kind === "rawtree" ? "Reading the latest competitor data from RawTree and rendering a short…" : kind === "storyboard" ? "Rendering scenes, motion, overlays, and narration…" : kind === "ad" ? "Writing your ad and rendering scenes… this takes 1–3 minutes." : kind === "company" ? "Writing your story and rendering scenes… this takes 1–3 minutes." : `Generating a ${clipCopy} clip with sound…`;
+  return kind === "upload" ? "Preparing frames from your clip…" : kind === "market" ? "Filming each development as a cinematic shot… this takes a few minutes." : kind === "storyboard" ? "Rendering scenes, motion, overlays, and narration…" : kind === "ad" ? "Writing your ad and rendering scenes… this takes 1–3 minutes." : kind === "company" ? "Writing your story and rendering scenes… this takes 1–3 minutes." : `Generating a ${clipCopy} clip with sound…`;
 }
 
 /** The side panel's default view: generating card, collapsible history list, and the output note. */

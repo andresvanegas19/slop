@@ -1,0 +1,166 @@
+{
+ "request": {
+  "query": "Asana",
+  "max_results": 10,
+  "focus": "news",
+  "time_range": "month",
+  "country": "US",
+  "locale": "en-US"
+ },
+ "response": {
+  "total_results": 10,
+  "results": [
+   {
+    "title": "HubSpot, Intuit, Asana, Snowflake, and Atlassian Shares Are Falling, What You Need To Know",
+    "description": "HubSpot, Intuit, Asana, Snowflake, and Atlassian Shares Are Falling, What You Need To Know \u00b7 HUBS \u00b7 CL=F \u00b7 INTU \u00b7 ASAN \u00b7 SNOW \u00b7 Explore stocks on Coinbase",
+    "url": "https://finance.yahoo.com/markets/stocks/articles/hubspot-intuit-asana-snowflake-atlassian-221820972.html",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 1,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana CEO on solving the AI agent coordination problem",
+    "description": "Asana CEO on solving the AI agent coordination problem. Dan Rogers, Asana CEO, joins 'The Exchange' to discuss the company's business operations, competition...",
+    "url": "https://www.cnbc.com/video/2026/09/04/asana-ceo-on-solving-the-ai-agent-coordination-problem.html",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 2,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Microsoft Planner vs Asana: Which PM Tool Wins in 2026?",
+    "description": "Microsoft Planner is better for organizations already using Microsoft 365 and wanting simple task management inside that ecosystem. Asana is better for teams...",
+    "url": "https://www.techrepublic.com/article/asana-vs-planner/",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 3,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana\u2019s AI pricing shift brings near-term revenue pressure",
+    "description": "Asana, which designs software for managing work projects, expects its shift toward consumption-based artificial intelligence pricing to contribute to a $1.2...",
+    "url": "https://www.cfodive.com/news/asanas-ai-pricing-shift-brings-near-term-revenue-pressure/829730/",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 4,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Why Asana Stock Flailed on Friday",
+    "description": "It slightly lifted the bottom end of its revenue forecast, so the range is now $858.5 million to $863.5 million; the previous bottom was $855.5 million.",
+    "url": "https://www.fool.com/investing/2026/09/04/why-asana-stock-flailed-on-friday/",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 5,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana Announces Second Quarter Fiscal 2027 Results",
+    "description": "Asana, Inc. (NYSE: ASAN)(LTSE: ASAN), the operating system for human-agent teams, today reported financial results for its second quarter fiscal 2027 ended...",
+    "url": "https://www.businesswire.com/news/home/20260902988152/en/Asana-Announces-Second-Quarter-Fiscal-2027-Results",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 6,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana (ASAN) Beat Expectations, Is The Stock Still Expensive?",
+    "description": "Asana last closed at $10.09 versus a widely followed fair value estimate of $9.13, which frames the current debate around its AI driven shift and earnings path.",
+    "url": "https://finance.yahoo.com/markets/stocks/articles/asana-asan-beat-expectations-stock-201254280.html",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 7,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana, Tenable, UiPath, Guidewire Software, and Pegasystems Shares Are Soaring, What You Need To Know",
+    "description": "A number of stocks jumped in the afternoon session after shares of enterprise software and SaaS companies rallied broadly as investors rotated capital out...",
+    "url": "https://finance.yahoo.com/markets/stocks/articles/asana-tenable-uipath-guidewire-software-020330941.html",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "1 week ago"
+    },
+    "metadata": {
+     "position": 8,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Asana to Present at Upcoming Investor Events",
+    "description": "SAN FRANCISCO, September 04, 2026--Asana, Inc. (NYSE: ASAN)(LTSE: ASAN), the operating system for human-agent teams, today announced that Asana's executives...",
+    "url": "https://finance.yahoo.com/markets/stocks/articles/asana-present-upcoming-investor-events-200500461.html",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "3 weeks ago"
+    },
+    "metadata": {
+     "position": 9,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   },
+   {
+    "title": "Q2 Earnings Roundup: Asana (NYSE:ASAN) And The Rest Of The Productivity Software Segment",
+    "description": "Born from the founders' frustration with the inefficiencies of email-based collaboration at Facebook, Asana (NYSE:ASAN) provides a work management platform that...",
+    "url": "https://finance.yahoo.com/markets/stocks/articles/q2-earnings-roundup-asana-nyse-225038281.html",
+    "content": "",
+    "additional_data": {
+     "publish_date_raw": "2 weeks ago"
+    },
+    "metadata": {
+     "position": 10,
+     "entity_type": "NewsResult",
+     "country": "US",
+     "locale": "en-US"
+    }
+   }
+  ],
+  "request_id": "ff456e69-a8d7-4922-8b33-82916dd9c705"
+ }
+}

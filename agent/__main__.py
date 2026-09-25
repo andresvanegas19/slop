@@ -19,6 +19,7 @@ import logging
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from .config import load_settings
 from .react import CompanyAgent
@@ -63,6 +64,14 @@ def build(args):
     research = ResearchManager(settings, ResearchStore(settings.agent_db), llm_factory=research_llm, outbox=store,
                                rawtree=rawtree if publish else None, publish=publish, reader=rawtree)
     worker = AgentWorker(settings, agent, store, coordinator, rawtree, publish=publish, research=research)
+    try:
+        from .market import MarketManager
+        from .market_pipeline import build_pipeline
+        worker.market = MarketManager(build_pipeline(settings, rawtree if publish else None, publish,
+                                                     worker.loop_lock),
+                                      sessions_dir=Path(settings.agent_db).parent / "runs" / "market_sessions")
+    except (ImportError, SystemExit) as e:   # e.g. no NIMBLE_API_KEY: the rest of the agent still works
+        logging.getLogger("agent").warning("market updates disabled: %s", e)
     return settings, store, agent, worker
 
 

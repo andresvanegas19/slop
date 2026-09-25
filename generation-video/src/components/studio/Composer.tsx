@@ -7,7 +7,7 @@ import { CHIP_CLOSE, HistoryRowContent, Segmented, cn, collapse, fade, fadeUp, p
 import { PRESET_LENGTHS, VIDEO_ACCEPT, formatBytes, formatRange, isPreset, kindLabel } from "./utils";
 
 const MEDIA_OPTIONS: { type: MediaType; icon: string; title: string; description: string; advanced?: boolean }[] = [
-  { type: "rawtree", icon: "◎", title: "Competitor summary", description: "A short summary of the latest competitor moves (RawTree)" },
+  { type: "market", icon: "◎", title: "Market update", description: "Tell us about your company — we find your competitors and summarize what changed in your market" },
   { type: "ad", icon: "✦", title: "New ad", description: "A multi-scene ad from your product or offer" },
   { type: "company", icon: "◆", title: "Company short", description: "A short brand video about your company" },
   { type: "storyboard", icon: "☷", title: "Storyboard file", description: "Render a structured JSON storyboard", advanced: true },
@@ -22,8 +22,8 @@ export default function Composer({ studio }: { studio: Studio }) {
   const dragBlocked = s.isDragOver && s.attachDisabledReason !== null && !(isContinueMode && s.continueAction === "edit" && !s.isStoryboardProject);
   const busy = isContinueMode ? s.isEditing : s.isGenerating || s.isStartingResearch;
 
-  const placeholder = isAutoMode && sourceProject ? `Append “${sourceProject.title}” — press send, or add a note` : isAutoMode && attachment ? "Optional: say what to do with this clip…" : isAtEnd ? "What happens next? e.g. “she waves goodbye”…" : isAutoMode ? "Describe a change, ask a question, or say “make it 3 seconds longer”…" : isAppendMode && sourceProject ? `Append “${sourceProject.title}” — press send` : isAppendMode ? "Describe the next shot, or attach a video to add to the end…" : attachment && !isContinueMode ? "Optional: describe your video…" : isContinueMode ? `Continue editing at ${s.targetSec.toFixed(1)}s — describe what to change or ask about it…` : mediaType === "storyboard" ? "Storyboard file selected below" : mediaType === "rawtree" ? "No prompt needed — uses the latest competitor data" : mediaType === "ad" ? "Describe the product or offer to advertise…" : mediaType === "company" ? "Tell us about your company — what you do and for whom…" : `Describe your ${s.clipCopy} video`;
-  const submitLabel = isAutoMode ? "Send" : isAppendMode ? "Append shot" : isContinueMode ? "Send edit or question" : attachment ? "Import attached video" : mediaType === "storyboard" ? "Render storyboard" : mediaType === "rawtree" ? "Create competitor summary" : mediaType === "ad" ? "Create ad" : mediaType === "company" ? "Create company short" : "Generate quick clip";
+  const placeholder = isAutoMode && sourceProject ? `Append “${sourceProject.title}” — press send, or add a note` : isAutoMode && attachment ? "Optional: say what to do with this clip…" : isAtEnd ? "What happens next? e.g. “she waves goodbye”…" : isAutoMode ? "Describe a change, ask a question, or say “make it 3 seconds longer”…" : isAppendMode && sourceProject ? `Append “${sourceProject.title}” — press send` : isAppendMode ? "Describe the next shot, or attach a video to add to the end…" : attachment && !isContinueMode ? "Optional: describe your video…" : isContinueMode ? `Continue editing at ${s.targetSec.toFixed(1)}s — describe what to change or ask about it…` : mediaType === "storyboard" ? "Storyboard file selected below" : mediaType === "market" ? "Tell us about your company, e.g. “We're Acme, invoicing software for freelancers”" : mediaType === "ad" ? "Describe the product or offer to advertise…" : mediaType === "company" ? "Tell us about your company — what you do and for whom…" : `Describe your ${s.clipCopy} video`;
+  const submitLabel = isAutoMode ? "Send" : isAppendMode ? "Append shot" : isContinueMode ? "Send edit or question" : attachment ? "Import attached video" : mediaType === "storyboard" ? "Render storyboard" : mediaType === "market" ? "Start market update" : mediaType === "ad" ? "Create ad" : mediaType === "company" ? "Create company short" : "Generate quick clip";
 
   return (
     <div
@@ -182,8 +182,8 @@ export default function Composer({ studio }: { studio: Studio }) {
           onChange={(event) => s.setPrompt(event.target.value)}
           placeholder={placeholder}
           aria-label={isContinueMode ? `Edit or ask about the moment at ${s.targetSec.toFixed(1)} seconds` : "Video idea"}
-          maxLength={isContinueMode ? 4000 : 32000}
-          disabled={!isContinueMode && !attachment && (mediaType === "storyboard" || mediaType === "rawtree")}
+          maxLength={isContinueMode || mediaType === "market" ? 4000 : 32000}
+          disabled={!isContinueMode && !attachment && mediaType === "storyboard"}
         />
         <motion.button
           className={cn(
@@ -203,7 +203,7 @@ export default function Composer({ studio }: { studio: Studio }) {
           <AnimatePresence initial={false}>
             {mediaType && (
               <motion.div key="source-chip" className="mt-3 ml-2.5 inline-flex items-center gap-2 rounded-full border border-[#3a3a3a] bg-[#181818] py-[5px] pr-1.5 pl-3 text-[12px] text-[#cfcfcf]" {...pop}>
-                <span>{mediaType === "storyboard" ? "☷ Storyboard file" : mediaType === "rawtree" ? "◎ Competitor summary" : mediaType === "ad" ? "✦ New ad" : "◆ Company short"}</span>
+                <span>{mediaType === "storyboard" ? "☷ Storyboard file" : mediaType === "market" ? "◎ Market update" : mediaType === "ad" ? "✦ New ad" : "◆ Company short"}</span>
                 <button type="button" className={CHIP_CLOSE} onClick={() => s.selectMediaType(null)} aria-label="Back to quick clip">✕</button>
               </motion.div>
             )}
