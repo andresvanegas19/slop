@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { MemorySource } from "@/lib/memory";
 import type { Storyboard } from "@/lib/storyboard";
 
 export type ProjectFrame = {
@@ -50,6 +51,8 @@ export type ChatMessage = {
   enhancedPrompt?: string;
   /** Titles of the RAG guidance documents used for this turn (assistant messages). */
   ragSources?: string[];
+  /** Where the memory used for this turn came from (assistant messages). */
+  memorySources?: MemorySource[];
   /** /command turns: the action that was run (assistant messages). */
   action?: string;
   /** /command turns: one-line description of what happened (assistant messages). */

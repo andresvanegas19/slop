@@ -20,7 +20,8 @@ import {
   type ProjectFrame,
 } from "@/lib/projects";
 import { enhanceImagePrompt, enhanceShotPrompt } from "@/lib/prompt-enhance";
-import { recordEditExample, retrieveContext, type RagContext } from "@/lib/rag";
+import { mergeMemorySources, retrieveMemory, type MemorySource } from "@/lib/memory";
+import { recordEditExample } from "@/lib/rag";
 import { emitEvent, emitStage, isStreaming } from "@/lib/progress";
 import { logInfo } from "@/lib/runtime-log";
 import { extractFirstFrame, extractLastFrame, SegmentError, videoFilePath } from "@/lib/segments";
@@ -59,7 +60,7 @@ export function actionErrorResponse(error: unknown, fallback: string) {
  * Drops storyboard-only guidance (e.g. the storyboard house-style prefix) for clip projects: the small model tends to
  * paste it into the clip's prompt and change its style. retrieveContext formats one "[n] Title: body" line per source.
  */
-export function relevantGuidance(rag: RagContext, kind: "clip" | "storyboard") {
+export function relevantGuidance<S extends { title: string }>(rag: { text: string; sources: S[] }, kind: "clip" | "storyboard") {
   if (kind === "storyboard" || !rag.text) return rag;
   const keep = rag.sources.map((source) => !/storyboard/i.test(source.title));
   if (keep.every(Boolean)) return rag;
@@ -112,6 +113,8 @@ export type AskResult = {
   edited: boolean;
   project: Project;
   ragSources: string[];
+  /** Where the memory used for this turn came from (knowledge, past videos, your prompts, research). */
+  memorySources: MemorySource[];
   grabbedFrameUrl?: string;
   enhancedPrompt?: string;
   window?: TimeRange;
@@ -163,11 +166,12 @@ export async function askFrame(input: AskInput): Promise<AskResult> {
   logInfo("frame_ask_started", { projectId: id, frame: index, messageLength: message.length, atSec, mode });
   const frame = project.frames.find((item) => item.index === index)!;
   emitStage("guidance", "Looking up editing guidance…");
-  const rag = relevantGuidance(await retrieveContext(
+  const rag = relevantGuidance(await retrieveMemory(
     [message, frame.prompt, frame.headline, frame.narration].filter(Boolean).join("\n"),
-    { k: 3, maxChars: GUIDANCE_MAX_CHARS, tags: ["editing", "flux", project.kind === "storyboard" ? "storyboard" : "motion"] },
+    { k: 4, maxChars: GUIDANCE_MAX_CHARS, tags: ["editing", "flux", project.kind === "storyboard" ? "storyboard" : "motion"], projectId: id, researchSessionId: project.researchSessionId },
   ), project.kind);
   const ragSources = [...new Set(rag.sources.map((source) => source.title))];
+  const memorySources = mergeMemorySources(rag.sources);
   emitStage("prompt", mode === "answer" ? "Thinking about your question…" : "Reading your request…");
   const streaming = isStreaming();
   const decision = await decideFrameChat(project, index, message, {
@@ -227,7 +231,7 @@ export async function askFrame(input: AskInput): Promise<AskResult> {
         at: now,
         ...(edited ? { edited: true } : {}),
         ...(enhancedPrompt ? { enhancedPrompt } : {}),
-        ...(ragSources.length ? { ragSources } : {}),
+        ...(ragSources.length ? { ragSources, memorySources } : {}),
         ...(input.chatExtra ?? {}),
       },
     ];
@@ -253,6 +257,7 @@ export async function askFrame(input: AskInput): Promise<AskResult> {
   return {
     ...result,
     ragSources,
+    memorySources,
     ...(grabbedFrameUrl ? { grabbedFrameUrl } : {}),
     ...(enhancedPrompt ? { enhancedPrompt } : {}),
     ...(window && result.edited ? { window } : {}),
@@ -279,6 +284,7 @@ export type AppendResult = {
   addedSeconds: number;
   enhancedPrompt?: string;
   ragSources?: string[];
+  memorySources?: MemorySource[];
   /** Generated appends: "v2v" (continued from the video's last ~2s) or "i2v" (from its last frame), per shot. */
   continuationModes?: string[];
 };
@@ -339,8 +345,11 @@ export async function appendToProject(input: AppendInput): Promise<AppendResult>
     let contextVideo = videoFilePath(project.videoUrl);
     const continuationModes: string[] = [];
     emitStage("guidance", "Looking up motion guidance…");
-    const rag = relevantGuidance(await retrieveContext(`${prompt}\n${previousPrompt}`, { k: 3, maxChars: GUIDANCE_MAX_CHARS, tags: ["motion", "flux"] }), "clip");
+    const rag = relevantGuidance(await retrieveMemory(`${prompt}\n${previousPrompt}`, {
+      k: 4, maxChars: GUIDANCE_MAX_CHARS, tags: ["motion", "flux"], projectId: id, researchSessionId: project.researchSessionId,
+    }), "clip");
     const ragSources = [...new Set(rag.sources.map((item) => item.title))];
+    const memorySources = mergeMemorySources(rag.sources);
     emitStage("prompt", "Writing the next shot's prompt…");
     const enhanced = await enhanceShotPrompt({
       projectId: id,
@@ -393,6 +402,7 @@ export async function appendToProject(input: AppendInput): Promise<AppendResult>
       addedSeconds: assembled.durationSeconds - before,
       enhancedPrompt: enhanced.prompt,
       ragSources,
+      memorySources,
       continuationModes,
     };
   });

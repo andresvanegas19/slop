@@ -1,15 +1,14 @@
 import { createChatCompletion, openRouterModel } from "@/lib/openrouter";
-import { userContextBlock } from "@/lib/user-context";
+import { retrieveMemory, type MemorySource } from "@/lib/memory";
 import { titleFromPrompt } from "@/lib/projects";
-import { retrieveContext } from "@/lib/rag";
 import { logException, logInfo } from "@/lib/runtime-log";
 
 export const PRESET_IDS = ["ad", "company"] as const;
 export type PresetId = (typeof PRESET_IDS)[number];
 export const PRESET_DURATIONS = [5, 10, 15, 30] as const;
 export type PresetDuration = (typeof PRESET_DURATIONS)[number];
-/** Only 16:9 is supported: the storyboard renderer outputs a fixed 1920x1080 video. */
-export const PRESET_ASPECTS = ["16:9"] as const;
+/** 16:9 → 1920x1080; 9:16 → 1080x1920 vertical phone video (cinematic renderer only). */
+export const PRESET_ASPECTS = ["16:9", "9:16"] as const;
 export type PresetAspect = (typeof PRESET_ASPECTS)[number];
 
 export const WORDS_PER_SECOND = 2.5;
@@ -194,7 +193,7 @@ export const PRESETS: Record<PresetId, PresetDefinition> = {
     label: "New ad",
     titlePrefix: "Ad",
     promptPrefix:
-      "Bold, clean commercial product photography, studio lighting, vibrant but controlled palette, shallow depth of field, NO text, NO letters, NO logos.",
+      "Handheld smartphone footage of real people using the product in everyday life, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, no text, letters or logos in frame.",
     ragTags: ["ad", "video", "production"],
     ragQuery: "ad hook product benefit call to action pacing narration",
     roles: {
@@ -208,7 +207,7 @@ export const PRESETS: Record<PresetId, PresetDefinition> = {
     label: "Company short",
     titlePrefix: "Company",
     promptPrefix:
-      "Warm documentary-style brand photography, natural light, authentic people and workplaces, cohesive color grade, NO text, NO letters, NO logos.",
+      "Handheld smartphone footage, slight natural sway, available natural light, phone-lens shallow depth of field, true-to-life color with gentle warmth, candid real people, no text, letters or logos in frame.",
     ragTags: ["company", "video", "production"],
     ragQuery: "company brand short who what why call to action authentic people pacing",
     roles: {
@@ -375,7 +374,7 @@ function systemPrompt(definition: PresetDefinition, roles: Role[], durations: nu
     "For EVERY scene write exactly three lines:",
     "HEADLINE: on-screen text, at most 6 words",
     "NARRATION: one short spoken sentence, within the word limit",
-    "VISUAL: one concrete photo description (subject, setting, lighting, framing). No text, letters, signs or logos in the picture.",
+    "VISUAL: one candid real moment as if filmed on a phone (people, what they do, the emotion, the place, the natural light). Moments over products. No text, letters, signs or logos in the picture.",
     "Output format (repeat for each scene, nothing else):",
     "SCENE 1",
     "HEADLINE: ...",
@@ -423,10 +422,10 @@ export function parseSceneLines(raw: string, count: number): ParsedScene[] {
 }
 
 async function writeWithLlm(definition: PresetDefinition, roles: Role[], durations: number[], prompt: string, companyContext?: string) {
-  const rag = await retrieveContext(`${prompt} ${definition.ragQuery}`, { k: 3, maxChars: 1_200, tags: definition.ragTags });
-  const userContext = await userContextBlock({ maxChars: 800 });
+  const rag = await retrieveMemory(`${prompt} ${definition.ragQuery}`, { k: 4, maxChars: 1_400, tags: definition.ragTags });
+  const memorySources = rag.sources;
   const messages = [
-    { role: "system" as const, content: systemPrompt(definition, roles, durations, rag.text) + userContext },
+    { role: "system" as const, content: systemPrompt(definition, roles, durations, rag.text) },
     {
       role: "user" as const,
       content: `${companyContext ? `Company context (true, current facts; use what fits the brief, never invent numbers):\n${companyContext}\n\n` : ""}Brief: ${prompt}\n\nWrite all ${roles.length} scenes now.`,
@@ -441,15 +440,15 @@ async function writeWithLlm(definition: PresetDefinition, roles: Role[], duratio
       const found = parsed.filter((scene) => scene.headline || scene.narration || scene.visual).length;
       if (found > 0 || attempt === 1) {
         logInfo("preset_llm_reply", { preset: definition.titlePrefix, scenesFound: found, finishReason: result.finishReason, chars: result.content.length });
-        return { parsed, guidance: rag.text };
+        return { parsed, guidance: rag.text, memorySources };
       }
       logInfo("preset_llm_unusable_retry", { preset: definition.titlePrefix, finishReason: result.finishReason, chars: result.content.length });
       if (result.finishReason === "length") maxTokens *= 2;
     }
-    return { parsed: undefined, guidance: rag.text };
+    return { parsed: undefined, guidance: rag.text, memorySources };
   } catch (error) {
     logException("preset_llm_failed", error, { preset: definition.titlePrefix, scenes: roles.length });
-    return { parsed: undefined, guidance: rag.text };
+    return { parsed: undefined, guidance: rag.text, memorySources };
   }
 }
 
@@ -464,14 +463,14 @@ export async function buildPresetStoryboard(input: {
   companyContext?: string;
   /** Optional visual-only direction appended to every image prompt (no digits, no text/logos; see researchVisualHint). */
   visualHint?: string;
-}): Promise<{ storyboard: PresetStoryboard; source: PresetTextSource }> {
+}): Promise<{ storyboard: PresetStoryboard; source: PresetTextSource; memorySources: MemorySource[] }> {
   const definition = PRESETS[input.preset];
   const prompt = input.prompt.replace(/\s+/g, " ").trim();
   const roles = definition.roles[input.durationSec];
   const totalMs = input.durationSec * 1000;
   const durations = planDurationsMs(totalMs, roles.length);
   const subject = subjectFromPrompt(prompt);
-  const { parsed, guidance } = await writeWithLlm(definition, roles, durations, prompt, input.companyContext);
+  const { parsed, guidance, memorySources } = await writeWithLlm(definition, roles, durations, prompt, input.companyContext);
 
   let llmFields = 0;
   let startMs = 0;
@@ -511,13 +510,14 @@ export async function buildPresetStoryboard(input: {
 
   return {
     source,
+    memorySources,
     storyboard: {
       storyboard_id: `${input.preset}_${new Date().toISOString().replace(/[:.]/g, "-")}`,
       preset: input.preset,
       title: `${definition.titlePrefix}: ${titleFromPrompt(stripRequestPrefix(prompt), 6)}`,
       prompt,
       total_duration_sec: input.durationSec,
-      style: { prompt_prefix: definition.promptPrefix, seed: 42, aspect_ratio: "16:9", resolution: "1920x1080" },
+      style: { prompt_prefix: definition.promptPrefix, seed: 42, aspect_ratio: input.aspect ?? "16:9", resolution: input.aspect === "9:16" ? "1080x1920" : "1920x1080" },
       scenes,
       voiceover_full: scenes.map((scene) => scene.narration).join(" "),
       narration_warnings: [],

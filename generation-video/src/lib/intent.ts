@@ -1,5 +1,4 @@
 import { createChatCompletion, openRouterModel, type ChatTool } from "@/lib/openrouter";
-import { userContextBlock } from "@/lib/user-context";
 import type { Project } from "@/lib/projects";
 import { logInfo } from "@/lib/runtime-log";
 
@@ -252,10 +251,9 @@ export async function detectIntent(context: IntentContext): Promise<Intent> {
   if (rules.strong || context.useLlm === false) return fromRules();
 
   try {
-    const userContext = await userContextBlock({ maxChars: 600 });
     const result = await createChatCompletion({
       model: openRouterModel(),
-      messages: [{ role: "system", content: systemPrompt(context, atEnd) + userContext }, { role: "user", content: context.message }],
+      messages: [{ role: "system", content: systemPrompt(context, atEnd) }, { role: "user", content: context.message }],
       tools: tools(context),
       maxTokens: 1_024,
       temperature: 0,

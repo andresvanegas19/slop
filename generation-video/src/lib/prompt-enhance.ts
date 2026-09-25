@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { userContextBlock } from "@/lib/user-context";
 import { createChatCompletion, modelSupportsImages, openRouterModel, type ChatContentPart } from "@/lib/openrouter";
 import { guidanceBlock } from "@/lib/frame-chat";
 import type { Project } from "@/lib/projects";
@@ -165,11 +164,10 @@ export async function enhanceImagePrompt(input: {
     const content: string | ChatContentPart[] = imageUrl
       ? [{ type: "text", text }, { type: "image_url", image_url: { url: imageUrl } }]
       : text;
-    const userContext = await userContextBlock();
     const result = await createChatCompletion({
       model,
       onToken: input.onToken,
-      messages: [{ role: "system", content: SYSTEM + guidanceBlock(input.guidance) + userContext }, { role: "user", content }],
+      messages: [{ role: "system", content: SYSTEM + guidanceBlock(input.guidance) }, { role: "user", content }],
       // The free LFM model sometimes spends tokens before answering; a low cap truncates mid-sentence.
       maxTokens: 1_500,
       temperature: 0.4,
@@ -181,8 +179,7 @@ export async function enhanceImagePrompt(input: {
       output = end > MIN_LENGTH ? output.slice(0, end + 1) : output;
     }
     let prompt = sanitizeEnhancedPrompt(output);
-    // Past prompts in the user context must not be pasted in either (same guard as guidance).
-    if (prompt && copiesGuidance(prompt, `${input.guidance ?? ""}\n${userContext}`, `${frame.prompt} ${input.instruction}`)) {
+    if (prompt && copiesGuidance(prompt, input.guidance, `${frame.prompt} ${input.instruction}`)) {
       logInfo("prompt_enhance_copied_guidance", { model });
       prompt = undefined;
     }
@@ -253,11 +250,10 @@ export async function enhanceShotPrompt(input: {
     const content: string | ChatContentPart[] = imageUrl
       ? [{ type: "text", text }, { type: "image_url", image_url: { url: imageUrl } }]
       : text;
-    const userContext = await userContextBlock();
     const result = await createChatCompletion({
       model,
       onToken: input.onToken,
-      messages: [{ role: "system", content: SHOT_SYSTEM + guidanceBlock(input.guidance) + userContext }, { role: "user", content }],
+      messages: [{ role: "system", content: SHOT_SYSTEM + guidanceBlock(input.guidance) }, { role: "user", content }],
       maxTokens: 1_500,
       temperature: 0.5,
     });
@@ -267,7 +263,7 @@ export async function enhanceShotPrompt(input: {
       output = end > MIN_LENGTH ? output.slice(0, end + 1) : output;
     }
     let prompt = sanitizeEnhancedPrompt(output);
-    if (prompt && copiesGuidance(prompt, `${input.guidance ?? ""}\n${userContext}`, ownText)) {
+    if (prompt && copiesGuidance(prompt, input.guidance, ownText)) {
       logInfo("shot_prompt_copied_guidance", { model });
       prompt = undefined;
     }

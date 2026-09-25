@@ -5,7 +5,7 @@ import { emitStage } from "@/lib/progress";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { BflError, describeError } from "@/lib/bfl";
+import { BflError, describeError, isVideoQuality, type VideoQuality } from "@/lib/bfl";
 import {
   PRESET_DURATIONS,
   PRESET_IDS,
@@ -26,8 +26,9 @@ import {
 } from "@/lib/research-agent";
 import { createProject, framesFromStoryboard, isValidProjectId, videoUrl } from "@/lib/projects";
 import { schedulePublish } from "@/lib/video-store";
+import type { MemorySource } from "@/lib/memory";
 import { logException, logInfo } from "@/lib/runtime-log";
-import { renderStoryboard, totalDurationMs } from "@/lib/storyboard-renderer";
+import { isStoryboardRenderMode, renderStoryboard, totalDurationMs, type StoryboardRenderMode } from "@/lib/storyboard-renderer";
 import { validateStoryboard } from "@/lib/storyboard";
 
 export const runtime = "nodejs";
@@ -90,10 +91,12 @@ async function handlePost(request: Request) {
     return responseError(`"durationSec" must be one of ${PRESET_DURATIONS.join(", ")} (seconds).`, 400);
   }
   const aspect = body.aspect === undefined ? "16:9" : body.aspect;
-  if (aspect === "9:16") {
-    return responseError('"aspect" 9:16 is not supported yet: the storyboard renderer outputs a fixed 1920x1080 (16:9) video. Use "16:9".', 400);
-  }
-  if (aspect !== "16:9") return responseError('"aspect" must be "16:9".', 400);
+  if (aspect !== "16:9" && aspect !== "9:16") return responseError('"aspect" must be "16:9" or "9:16".', 400);
+  // Render options: style "cinematic" (default: real FLUX 3 shots) | "still" (legacy slideshow); quality "final" | "draft".
+  if (body.style !== undefined && !isStoryboardRenderMode(body.style)) return responseError('"style" must be "cinematic" or "still".', 400);
+  if (body.quality !== undefined && !isVideoQuality(body.quality)) return responseError('"quality" must be "final" or "draft".', 400);
+  if (aspect === "9:16" && body.style === "still") return responseError('"aspect" 9:16 needs the cinematic style (the still renderer is 16:9 only).', 400);
+  const renderOptions = { mode: body.style as StoryboardRenderMode | undefined, quality: body.quality as VideoQuality | undefined, brief: prompt };
   if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
     return responseError('"dryRun" must be a boolean.', 400);
   }
@@ -123,11 +126,13 @@ async function handlePost(request: Request) {
   const researchSessionId = typeof body.researchSessionId === "string" && isValidProjectId(body.researchSessionId) ? body.researchSessionId : undefined;
 
   let storyboard: PresetStoryboard;
+  let memorySources: MemorySource[] = [];
+  let companyContext: string | undefined;
   try {
     emitStage("prompt", "Writing the storyboard…");
     // A research session is specific to this company; the tracked-competitor brief would only add noise then.
-    const companyContext = research ? researchContextForWriter(research) : companyContextForWriter(await getCompanyContext(prompt, "preset"));
-    ({ storyboard } = await buildPresetStoryboard({ preset, prompt, durationSec, aspect, companyContext, visualHint: researchVisualHint(research) }));
+    companyContext = research ? researchContextForWriter(research) : companyContextForWriter(await getCompanyContext(prompt, "preset"));
+    ({ storyboard, memorySources } = await buildPresetStoryboard({ preset, prompt, durationSec, aspect, companyContext, visualHint: researchVisualHint(research) }));
   } catch (error) {
     return failure(error, "build", preset);
   }
@@ -141,7 +146,7 @@ async function handlePost(request: Request) {
     return responseError(`Generated storyboard is ${totalDurationMs(validation.data) / 1000}s, not exactly ${durationSec}s.`, 500);
   }
 
-  if (dryRun) return NextResponse.json({ storyboard, ...(researchInfo ? { research: researchInfo } : {}) });
+  if (dryRun) return NextResponse.json({ storyboard, memorySources, ...(researchInfo ? { research: researchInfo } : {}) });
 
   const runId = randomUUID();
   let storyboardPath: string;
@@ -154,7 +159,7 @@ async function handlePost(request: Request) {
   try {
     logInfo("generate_preset_render_started", { runId, preset, durationSec, scenes: validation.data.scenes.length });
     emitStage("render", "Generating scenes and rendering the video…");
-    const rendered = await renderStoryboard(validation.data, runId);
+    const rendered = await renderStoryboard(validation.data, runId, { ...renderOptions, companyContext });
     const manifests = path.join(process.cwd(), "output", "manifests");
     await mkdir(manifests, { recursive: true });
     await writeFile(path.join(manifests, `${runId}.manifest.json`), JSON.stringify({
@@ -185,8 +190,12 @@ async function handlePost(request: Request) {
       durationSeconds: rendered.durationSeconds,
       sceneCount: validation.data.scenes.length,
       narrationAvailable: rendered.narrationAvailable,
+      engine: rendered.engine,
+      quality: rendered.quality,
+      sceneEngines: rendered.sceneEngines,
       storyboard,
       project,
+      memorySources,
       ...(researchInfo ? { research: researchInfo } : {}),
     });
   } catch (error) {

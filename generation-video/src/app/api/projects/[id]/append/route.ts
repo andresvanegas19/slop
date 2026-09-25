@@ -38,6 +38,7 @@ async function handlePost(request: Request, { params }: { params: Promise<{ id: 
       appendedFrameIndexes: result.appendedFrameIndexes,
       ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}),
       ...(result.ragSources ? { ragSources: result.ragSources } : {}),
+      ...(result.memorySources ? { memorySources: result.memorySources } : {}),
       ...(result.continuationModes ? { continuationModes: result.continuationModes } : {}),
     });
   } catch (error) {

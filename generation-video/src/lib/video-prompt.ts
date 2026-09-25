@@ -5,7 +5,10 @@ import { logException, logInfo } from "@/lib/runtime-log";
 /** Prompt writing must never make a short clip slow; past this the user's own prompt is used. */
 const ENHANCE_TIMEOUT_MS = 20_000;
 
-export type VideoPrompt = { prompt: string; source: "llm" | "fallback"; model?: string };
+export type VideoPrompt = { prompt: string; source: "llm" | "fallback" | "raw"; model?: string };
+
+/** Budget for the cinematic shot writer on a quick clip; past this the user's own prompt is used. */
+const CINEMATIC_TIMEOUT_MS = 30_000;
 
 function system(clipSeconds: number) {
   return [
@@ -32,6 +35,25 @@ function withTimeout<T>(promise: Promise<T>, ms: number) {
     const timer = setTimeout(() => reject(new Error(`timed out after ${ms / 1000}s`)), ms);
     promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+/**
+ * Quick-clip prompt: the cinematic (phone-footage) single-shot writer — subject/action/emotion, place + light, framing,
+ * ONE camera move, look, ambient audio — streamed as `enhancedPrompt` tokens. `rawPrompt: true` sends the user's
+ * prompt unchanged; placeholder or already-directed prompts bypass the writer. Env VIDEO_PROMPT_WRITER=basic uses the
+ * older generic writer (writeVideoPrompt). Never throws.
+ */
+export async function writeClipPrompt(idea: string, clipSeconds: number, options: { companyContext?: string; rawPrompt?: boolean } = {}): Promise<VideoPrompt> {
+  if (options.rawPrompt) return { prompt: idea, source: "raw" };
+  if (process.env.VIDEO_PROMPT_WRITER?.trim() === "basic") return writeVideoPrompt(idea, clipSeconds, options.companyContext);
+  try {
+    const { writeCinematicClipPrompt } = await import("@/lib/cinematic-prompts");
+    const result = await withTimeout(writeCinematicClipPrompt(idea, clipSeconds, { companyContext: options.companyContext }), CINEMATIC_TIMEOUT_MS);
+    return { prompt: result.source === "raw" ? idea : withAudio(result.prompt), source: result.source === "fallback" ? "fallback" : result.source };
+  } catch (error) {
+    logException("clip_prompt_failed", error);
+    return { prompt: idea, source: "fallback" };
+  }
 }
 
 /**

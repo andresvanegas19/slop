@@ -2,7 +2,7 @@ import { loadEnvConfig } from "@next/env";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { describeError } from "@/lib/bfl";
-import { logException, logInfo } from "@/lib/runtime-log";
+import { logError, logException, logInfo } from "@/lib/runtime-log";
 import { ANONYMOUS_USER, parseUserId } from "@/lib/user-context";
 
 /**
@@ -147,7 +147,9 @@ function agentReply(status: number, body: Record<string, unknown>, route: string
 export function agentErrorResponse(error: unknown, route: string) {
   const status = error instanceof ResearchAgentError ? error.status : 502;
   const message = error instanceof ResearchAgentError ? error.message : describeError(error, "Research agent request failed");
-  logException("research_agent_failed", error, { route, status, message });
+  // Expected conditions (agent not running, timeouts) get one log line; anything else gets the full stack.
+  if (error instanceof ResearchAgentError) logError("research_agent_failed", { route, status, message });
+  else logException("research_agent_failed", error, { route, status, message });
   return NextResponse.json({ error: message }, { status });
 }
 

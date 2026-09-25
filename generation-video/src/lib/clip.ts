@@ -2,7 +2,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { BflError, generateBflImage, generateBflVideo } from "@/lib/bfl";
+import { BflError, generateBflImage, generateBflVideoDetailed, videoQuality, type VideoQuality } from "@/lib/bfl";
 import { logInfo } from "@/lib/runtime-log";
 
 /** FLUX 3 renders at least 5s; the first CLIP_SECONDS are kept so clips stay short. */
@@ -62,8 +62,11 @@ function shortClipPrompt(prompt: string) {
   return `${prompt.replace(/\s+$/, "")}\n\nPacing: the action starts on the first frame and the key moment lands within the first ${CLIP_SECONDS} seconds. No on-screen text.`;
 }
 
-/** Generates a FLUX 3 clip (i2v when `keyframe` is given, otherwise t2v) and trims it into output/videos. */
-async function renderFlux3Clip(prompt: string, keyframe?: string) {
+/**
+ * Generates a FLUX 3 clip (i2v when `keyframe` is given, otherwise t2v) and trims it into output/videos (always
+ * 1280x720 so segments concatenate). `quality` defaults to videoQuality("edit") (draft: fast edits/appends).
+ */
+async function renderFlux3Clip(prompt: string, keyframe?: string, quality: VideoQuality = videoQuality("edit")) {
   const videoDirectory = path.join(process.cwd(), "output", "videos");
   await mkdir(videoDirectory, { recursive: true });
   const id = randomUUID();
@@ -72,8 +75,9 @@ async function renderFlux3Clip(prompt: string, keyframe?: string) {
   const filename = `${id}.mp4`;
   const startedAt = Date.now();
   try {
-    const url = await generateBflVideo({ prompt: shortClipPrompt(prompt), keyframes: keyframe ? [keyframe] : undefined });
-    await downloadBflVideo(url, source);
+    const result = await generateBflVideoDetailed({ prompt: shortClipPrompt(prompt), keyframes: keyframe ? [keyframe] : undefined, quality });
+    await downloadBflVideo(result.url, source);
+    logInfo("flux3_clip_quality", { requested: quality, bfl: `${result.resolution}/draft=${result.draft}` });
     await trimVideoClip(source, temporary);
     await rename(temporary, path.join(videoDirectory, filename));
   } finally {
@@ -134,9 +138,10 @@ async function renderZoomClip(frameFilename: string) {
  * Generates an exactly-CLIP_SECONDS clip from a prompt with FLUX 3 text-to-video (one BFL call),
  * then saves its first frame to output/frames as the project's editable key frame.
  */
-export async function generateClipFromPrompt(prompt: string) {
+export async function generateClipFromPrompt(prompt: string, options: { quality?: VideoQuality } = {}) {
   try {
-    const videoFilename = await renderFlux3Clip(prompt);
+    // The first generation of a quick clip is full quality by default (BFL_VIDEO_QUALITY_CLIP); edits stay draft.
+    const videoFilename = await renderFlux3Clip(prompt, undefined, options.quality ?? videoQuality("clip"));
     const frameDirectory = path.join(process.cwd(), "output", "frames");
     await mkdir(frameDirectory, { recursive: true });
     const frameFilename = `${randomUUID()}.png`;

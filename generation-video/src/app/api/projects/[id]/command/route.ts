@@ -15,7 +15,7 @@ import {
 } from "@/lib/project-actions";
 import { clampWindowSec, MOMENT_RANGE, validateMomentRange } from "@/lib/project-edit";
 import { loadProject, type Project, type ProjectFrame } from "@/lib/projects";
-import { retrieveContext } from "@/lib/rag";
+import { mergeMemorySources, retrieveMemory } from "@/lib/memory";
 import { logException, logInfo } from "@/lib/runtime-log";
 
 export const runtime = "nodejs";
@@ -97,9 +97,11 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
     const contextFrame = (atSec !== undefined ? frameAt(project, atSec) : undefined) ?? lastFrame(project);
 
     emitStage("guidance", "Looking up guidance…");
-    const rag = relevantGuidance(await retrieveContext(`${message}\n${contextFrame.prompt}`, {
-      k: 2, maxChars: 800, tags: ["editing", "flux", project.kind === "storyboard" ? "storyboard" : "motion"],
+    const rag = relevantGuidance(await retrieveMemory(`${message}\n${contextFrame.prompt}`, {
+      k: 3, maxChars: 800, tags: ["editing", "flux", project.kind === "storyboard" ? "storyboard" : "motion"], projectId: id, researchSessionId: project.researchSessionId,
     }), project.kind);
+    // Memory that routed the message; merged with the memory each action used, for the response.
+    const intentMemory = rag.sources;
     emitStage("intent", "Working out what you want…");
     const intent = await detectIntent({
       message,
@@ -122,7 +124,7 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
           projectId: id, index: contextFrame.index, message, atSec, windowSec: clampWindowSec(undefined), range: usableRange, mode: "answer",
           chatExtra: { action: "answer", summary: "Answered your question" },
         });
-        return ok({ ...base, summary: "Answered your question", reply: result.reply, project: result.project, ragSources: result.ragSources });
+        return ok({ ...base, summary: "Answered your question", reply: result.reply, project: result.project, ragSources: result.ragSources, memorySources: mergeMemorySources(intentMemory, result.memorySources) });
       }
       case "edit_range": {
         const instruction = intent.params.instruction || message;
@@ -131,7 +133,7 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
           const index = contextFrame.index;
           const summary = `Edited shot ${index + 1}`;
           const result = await askFrame({ projectId: id, index, message: instruction, atSec, windowSec: clampWindowSec(undefined), mode: "edit", chatExtra: { action: "edit_range", summary } });
-          return ok({ ...base, summary, reply: result.reply, project: result.project, enhancedPrompt: result.enhancedPrompt, ragSources: result.ragSources });
+          return ok({ ...base, summary, reply: result.reply, project: result.project, enhancedPrompt: result.enhancedPrompt, ragSources: result.ragSources, memorySources: mergeMemorySources(intentMemory, result.memorySources) });
         }
         let target: { frame: ProjectFrame; range: TimeRange; atSec: number };
         if (range) {
@@ -150,6 +152,7 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
         return ok({
           ...base, summary: result.edited ? summary : "No change was made", reply: result.reply, project: result.project,
           ...(result.window ? { window: result.window } : {}), enhancedPrompt: result.enhancedPrompt, ragSources: result.ragSources,
+          memorySources: mergeMemorySources(intentMemory, result.memorySources),
         });
       }
       case "append_shot": {
@@ -157,10 +160,14 @@ async function runCommand(id: string, body: CommandBody): Promise<ActionOutcome>
         const result = await appendToProject({ projectId: id, prompt: intent.params.prompt || message, seconds: intent.params.seconds });
         const shots = result.appendedFrameIndexes.length;
         const summary = `Extended the video by ${result.addedSeconds}s (${shots} new shot${shots === 1 ? "" : "s"})`;
-        const updated = await appendChat(id, result.appendedFrameIndex, { text: message }, { text: summary, action: "append_shot", summary, ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}) });
+        const memorySources = mergeMemorySources(intentMemory, result.memorySources);
+        const updated = await appendChat(id, result.appendedFrameIndex, { text: message }, {
+          text: summary, action: "append_shot", summary, ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}),
+          ...(result.ragSources?.length ? { ragSources: result.ragSources } : {}), ...(memorySources.length ? { memorySources } : {}),
+        });
         return ok({
           ...base, summary, project: updated, appendedFrameIndexes: result.appendedFrameIndexes,
-          ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}), ...(result.ragSources ? { ragSources: result.ragSources } : {}),
+          ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}), ...(result.ragSources ? { ragSources: result.ragSources } : {}), memorySources,
           ...(result.continuationModes ? { continuationModes: result.continuationModes } : {}),
         });
       }
