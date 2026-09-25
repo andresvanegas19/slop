@@ -282,7 +282,7 @@ async function getIndex(): Promise<Index> {
   return building;
 }
 
-// ---------- retrieval ----------
+// ---------- retrieval (BM25 + headings + phrases, per-file caps, dedupe) ----------
 
 /** Extra weight (× idf) for each query term found in the chunk's heading. */
 const TITLE_WEIGHT = 0.35;

@@ -172,7 +172,8 @@ const PEOPLE = /\b(?:people|person|owners?|team|staff|couple|family|friends?|cus
 function fallbackBible(brief: string, scenes: CinematicSceneInput[]): ContinuityBible {
   const all = `${brief} ${scenes.map((scene) => `${scene.visual} ${scene.narration}`).join(" ")}`;
   const lower = all.toLowerCase();
-  const time = /\bnight\b/.test(lower) ? "night, clear and calm, warm practical lights glowing"
+  const time = /\bgolden hour\b/.test(brief.toLowerCase()) ? "golden hour, low warm sun, clear sky with a light breeze"
+    : /\bnight\b/.test(lower) ? "night, clear and calm, warm practical lights glowing"
     : /\b(?:dawn|sunrise|early morning)\b/.test(lower) ? "early morning just after sunrise, low warm sun, light mist"
     : /\brain\w*\b/.test(lower) ? "soft overcast afternoon after rain, wet reflective ground"
     : /\bsnow\w*\b/.test(lower) ? "crisp winter afternoon, light snow, low sun"
@@ -222,26 +223,42 @@ const BIBLE_SYSTEM = [
   "LOCATION: the one real place and its visible landmarks and textures",
   "TIME: time of day, weather and the available light (golden hour, window light or street light)",
   "GRADE: color as a phone captures it (true-to-life, gentle warmth, natural contrast)",
-  "Real people and real places only: never illustration, cartoon, vector or 3D. No text, signs or logos. Output ONLY the four lines, nothing else.",
+  "Real people and real places only: never illustration, cartoon, vector or 3D. No text, signs or logos.",
+  "Start every line with its label. Example:",
+  "CHARACTERS: a man in his sixties with a white beard in a faded green fleece, and his granddaughter, about ten, in a yellow raincoat",
+  "LOCATION: a small harbor with wooden jetties, stacked lobster traps and a red fishing boat",
+  "TIME: early morning after rain, low sun breaking through clouds, wet reflective planks",
+  "GRADE: true-to-life phone color, gentle warmth, natural contrast",
+  "Output ONLY the four labeled lines, nothing else.",
 ].join("\n");
+
+function acceptBibleValue(key: keyof ContinuityBible, raw: string, result: Partial<ContinuityBible>) {
+  const value = stripMarkup(raw).replace(/["“”]/g, "").replace(/^\s*(?:\d+[.)]|[-•])\s*/, "").replace(/\.+$/, "").trim();
+  if (!value || JUNK.test(value) || result[key]) return;
+  if (key === "characters" && /^(?:none|no one|nobody|n\/a)\b/i.test(value)) {
+    result.characters = "none";
+    return;
+  }
+  if (styleTermsIn(value).length || TEXT_SENTENCE.test(value)) return;
+  result[key] = capWords(value, BIBLE_FIELD_MAX_WORDS);
+}
 
 function parseBible(raw: string): Partial<ContinuityBible> {
   const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "");
   const result: Partial<ContinuityBible> = {};
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const labeled = lines.some((line) => /^\W*(?:characters?|people|location|setting|time|weather|grade|look)\W*\s*[:\-–]/i.test(line));
+  if (!labeled && lines.length >= 4) {
+    // Small models often drop the labels but keep the order: characters, location, time, grade.
+    const order: (keyof ContinuityBible)[] = ["characters", "location", "time", "grade"];
+    order.forEach((key, index) => acceptBibleValue(key, lines[index], result));
+    return result;
+  }
   const keys: Record<string, keyof ContinuityBible> = { characters: "characters", character: "characters", people: "characters", location: "location", setting: "location", time: "time", weather: "time", grade: "grade", look: "grade" };
   for (const line of text.split(/\n+/)) {
     const match = line.match(/^\W*(characters?|people|location|setting|time|weather|grade|look)\W*\s*[:\-–]\s*(.+)$/i);
     if (!match) continue;
-    const key = keys[match[1].toLowerCase()];
-    if (result[key]) continue;
-    const value = stripMarkup(match[2]).replace(/["“”]/g, "").replace(/\.+$/, "").trim();
-    if (!value || JUNK.test(value)) continue;
-    if (key === "characters" && /^(?:none|no one|nobody|n\/a)\b/i.test(value)) {
-      result.characters = "none";
-      continue;
-    }
-    if (styleTermsIn(value).length || TEXT_SENTENCE.test(value)) continue;
-    result[key] = capWords(value, BIBLE_FIELD_MAX_WORDS);
+    acceptBibleValue(keys[match[1].toLowerCase()], match[2], result);
   }
   return result;
 }

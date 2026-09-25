@@ -4,7 +4,7 @@ import { logInfo } from "@/lib/runtime-log";
 
 /**
  * Per-user context from `slop_human_user_prompts` (see docs/RAWTREE_USER_CONTEXT.md): the user's recent prompts,
- * inferred preferences and recent failures, as a short text block for the small LLM calls. Never throws.
+ * inferred preferences and recent failures, as a short text block for the small LLM calls (and rows for memory.ts). Never throws.
  */
 
 export const USER_PROMPTS_TABLE = "slop_human_user_prompts";
