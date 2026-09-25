@@ -1,4 +1,5 @@
 /* Shared studio types (moved verbatim from app/page.tsx). */
+import type { Storyline } from "@/lib/storyline";
 
 export type MediaType = "storyboard" | "rawtree" | "ad" | "company" | "stories";
 export type PresetType = "ad" | "company";
@@ -51,6 +52,9 @@ export type AskResult = { reply?: unknown; edited?: unknown; project?: unknown; 
 export type ResearchQuestion = { id: string; question: string; options: string[]; answered: boolean; answer?: string };
 export type ResearchFinding = { key: string; text: string; source?: string; title?: string };
 export type ResearchStats = { pages: number; findings: number; tokens: number };
+/** A competitor the agent researched; it informs the differentiation only and is never named in the ad. */
+export type ResearchCompetitor = { id: string; name: string; domain?: string; verified: boolean; summary?: string; claims: string[]; pages: number; stage?: string; currentPage?: string; error?: string };
+export type ResearchCompetitors = { status: string; message?: string; items: ResearchCompetitor[]; differentiators: string[]; avoidTerms: string[] };
 export type ResearchSession = {
   id: string;
   prompt: string;
@@ -69,4 +73,8 @@ export type ResearchSession = {
   lastSeq: number;
   pagesSeen: number;
   error?: string;
+  competitors?: ResearchCompetitors;
+  /** The latest storyline (validated with parseStoryline) and whether the agent is writing one. */
+  storyline?: Storyline | null;
+  storylineWriting?: boolean;
 };
